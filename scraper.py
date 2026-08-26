@@ -153,8 +153,9 @@ def run():
                     hint = 'manga'
                 entries.append({'url': url, 'slug': hint, 'title': hint})
     if not entries:
-        print('[!] tidak ada sumber: isi site-content/sources.json atau tempel URL manual.')
-        return 1
+        print('Tidak ada sumber (sources.json kosong & tanpa URL manual).')
+        print('Sebelumnya scraper: pastikan sudah diisi, atau tempel URL lewat form Action.')
+        return 0
     # batas batch (default: semua)
     limit = None
     b = os.environ.get('BATCH_LIMIT', '')
