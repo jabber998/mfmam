@@ -56,15 +56,22 @@
     });
   }
 
-  // cari bab (halaman daftar manhwa): temukan bab yang ingin dibaca
+  // cari bab: temukan bab yang ingin dibaca
   var cfx = document.getElementById('chap-search-form'),
+      csec = document.getElementById('chapter-search'),
       cix = document.getElementById('chap-search-input'),
       crx = document.getElementById('chap-search-results');
   if (cfx && cix && crx) {
+    // Bila halaman seri punya data-series, batasi pencarian ke seri itu.
+    var seriesFilter = (csec && csec.getAttribute('data-series')) || '';
     var chapterIndex = [];
     fetch('/chapters-index.json').then(function(r){ return r.json(); })
       .then(function(d){ chapterIndex = d || []; })
       .catch(function(){});
+    function inSeries(d){
+      if (!seriesFilter) return true;
+      return (d.s || '').toLowerCase() === seriesFilter.toLowerCase();
+    }
     function tokenHit(token, d){
       if (!token) return true;
       if (/^\d+$/.test(token)){
@@ -80,7 +87,7 @@
       crx.innerHTML = '';
       if (!tokens.length){ crx.hidden = true; return; }
       var res = chapterIndex.filter(function(d){
-        return tokens.every(function(t){ return tokenHit(t, d); });
+        return inSeries(d) && tokens.every(function(t){ return tokenHit(t, d); });
       });
       res.sort(function(a, b){
         var as = a.s.toLowerCase().indexOf(q) === 0 ? 0

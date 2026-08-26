@@ -119,15 +119,18 @@ def series_page_html(s):
                    % (esc(c.get('slug', '')), esc(c.get('num', '')),
                       esc(c.get('title', ''))) for c in ch)
     badges_join = ''.join(badges)
+    search_ui = chapter_search_ui(s.get('title'))
     return ('<div class="seri-page"><div class="seri-head">'
             '<img class="seri-cover" src="%s" alt="%s" loading="lazy" '
             'referrerpolicy="no-referrer">'
             '<div class="seri-info"><h1>%s</h1>'
             '<div class="seri-meta">%s%s</div>%s</div></div>'
+            '%s'
             '<h2 class="sec-title">Daftar Bab (%d)</h2>'
             '<nav class="ch-list">%s</nav></div>'
             % (esc(s.get('cover_url') or '/assets/logo.png'), esc(s['title']),
                esc(s['title']), badges_join, meta, desc,
+               search_ui,
                len(ch), rows))
 
 
@@ -193,20 +196,30 @@ def chapter_index(series):
     return out
 
 
-def chapter_search_ui():
-    """Kolom pencarian bab untuk halaman daftar manhwa."""
-    return ('<section class="chapter-search" id="chapter-search">'
+def chapter_search_ui(series=None):
+    """Kolom pencarian bab. Bila `series` diberikan, pencarian dibatasi ke seri
+    tersebut (halaman detail seri); bila None, lintas seluruh manhwa (halaman
+    daftar). Atribut data-series dipakai JS untuk memfilter hasil."""
+    scope = ' data-series="%s"' % esc(series) if series else ''
+    if series:
+        label = ('Ketik nomor bab untuk melompat langsung (mis. %s, 120, '
+                 'bab 50):' % esc(series))
+        placeholder = 'Ketik nomor bab…'
+    else:
+        label = ('Ketik judul manhwa atau nomor bab (mis. Eleceed, 120, '
+                 'bab 50):')
+        placeholder = 'Ketik nama manhwa / nomor bab…'
+    return ('<section class="chapter-search" id="chapter-search"%s>'
             '<h2 class="sec-title">Cari Bab untuk Dibaca</h2>'
             '<form class="cs-form" id="chap-search-form" role="search">'
-            '<label for="chap-search-input" class="cs-label">Ketik judul '
-            'manhwa atau nomor bab (mis. Eleceed, 120, bab 50):</label>'
+            '<label for="chap-search-input" class="cs-label">%s</label>'
             '<div class="cs-field">'
             '<input id="chap-search-input" type="search" autocomplete="off" '
-            'value="" placeholder="Ketik nama manhwa / nomor bab…">'
+            'value="" placeholder="%s">'
             '<button type="submit" class="cs-btn">Cari &#128269;</button>'
             '</div></form>'
             '<div id="chap-search-results" class="cs-results" hidden></div>'
-            '</section>')
+            '</section>' % (scope, label, placeholder))
 
 
 def build():
