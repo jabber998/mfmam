@@ -1,0 +1,61 @@
+# Decap CMS - konfigurasi admin untuk situs Mfmam
+# Docs: https://decapcms.org/docs/
+backend:
+  name: git-gateway
+  branch: main          # ganti jika branch repo Anda bukan main
+
+# Lokasi file yang diupload lewat CMS (gambar), relatif terhadap repo.
+media_folder: "static/covers"
+public_folder: "/covers"
+
+# Alur editorial: perubahan disimpan sebagai draft sampai diterbitkan.
+publish_mode: editorial_workflow
+
+collections:
+  - name: "settings"
+    label: "Pengaturan Situs"
+    files:
+      - name: "site"
+        label: "Pengaturan Situs"
+        file: "site-content/settings.json"
+        format: "json"
+        fields:
+          - { label: "Nama Situs", name: "site_name", widget: "string" }
+          - { label: "Tagline", name: "tagline", widget: "string" }
+
+  - name: "pages"
+    label: "Halaman Info"
+    folder: "site-content/pages"
+    create: true
+    slug: "{{slug}}"
+    extension: "json"
+    format: "json"
+    identifier_field: "slug"
+    fields:
+      - { label: "Slug (URL), mis. kontak", name: "slug", widget: "string" }
+      - { label: "Judul", name: "title", widget: "string" }
+      - { label: "Isi", name: "text", widget: "markdown" }
+
+  - name: "series"
+    label: "Katalog Seri"
+    folder: "site-content/series"
+    create: true
+    slug: "{{slug}}"
+    extension: "json"
+    format: "json"
+    identifier_field: "slug"
+    fields:
+      - { label: "Slug seri (folder), mis. eleceed", name: "slug", widget: "string" }
+      - { label: "Judul", name: "title", widget: "string" }
+      - { label: "Deskripsi", name: "desc", widget: "text" }
+      - { label: "Genre (koma)", name: "genres", widget: "list" }
+      - { label: "URL sampul", name: "cover_url", widget: "string", required: false }
+      - label: "Daftar Bab"
+        name: "chapters"
+        widget: "list"
+        summary: "{{fields.title}}"
+        fields:
+          - { label: "Judul bab", name: "title", widget: "string" }
+          - { label: "Slug bab", name: "slug", widget: "string" }
+          - { label: "Nomor", name: "num", widget: "number", required: false }
+          - { label: "URL sumber", name: "external", widget: "string", required: false }

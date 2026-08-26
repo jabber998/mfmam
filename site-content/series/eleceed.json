@@ -1,0 +1,10 @@
+{
+  "slug": "eleceed",
+  "title": "Eleceed",
+  "desc": "Seorang pemuda biasa yang berteman dengan kucing misterius.",
+  "genres": ["Action", "Comedy"],
+  "cover_url": "https://acme.test/covers/eleceed.jpg",
+  "chapters": [
+    { "title": "Eleceed Chapter 1", "slug": "eleceed-chapter-1", "num": 1, "external": "https://acme.test/manga/eleceed-chapter-1/" }
+  ]
+}

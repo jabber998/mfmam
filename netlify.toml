@@ -1,0 +1,31 @@
+# Situs ini dapat dipakai dalam 2 mode:
+#  1) Deploy folder statis (drag & drop) -> build command diabaikan, publish = "."
+#  2) Deploy dari repo Git + /admin/ (Decap CMS) -> Netlify menjalankan build
+#     command berikut setelah commit (mis. hasil edit admin), lalu publish folder ini.
+[build]
+  publish = "."
+  command = "python _netlify_build.py"
+
+# URL cantik: /eleceed-chapter-1/ -> file eleceed-chapter-1/index.html
+[[redirects]]
+  from = "/manga/*"
+  to = "/manga/:splat/index.html"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/category/*"
+  to = "/manga/:splat/"
+  status = 301
+
+[[redirects]]
+  from = "/*"
+  to = "/:splat/index.html"
+  status = 200
+  force = true
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "no-referrer"

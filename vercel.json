@@ -1,0 +1,16 @@
+{
+  "version": 2,
+  "cleanUrls": true,
+  "trailingSlash": true,
+  "rewrites": [
+    { "source": "/manga/:path*", "destination": "/manga/:path*/index.html" },
+    { "source": "/category/:path*", "destination": "/manga/:path*/index.html" },
+    { "source": "/:path*", "destination": "/:path*/index.html" }
+  ],
+  "headers": [
+    { "source": "/(.*)", "headers": [
+        { "key": "X-Content-Type-Options", "value": "nosniff" },
+        { "key": "Referrer-Policy", "value": "no-referrer" }
+    ]}
+  ]
+}

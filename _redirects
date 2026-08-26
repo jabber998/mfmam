@@ -1,0 +1,4 @@
+# Netlify _redirects - URL cantik & redirect kategori lama
+/manga/*  /manga/:splat/index.html  200
+/category/*  /manga/:splat/  301
+/*  /:splat/index.html  200
