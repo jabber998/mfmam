@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<title>Diagnosa Decap CMS</title>
+</head>
+<body>
+<h3>Diagnosa admin Decap CMS — mfmam</h3>
+<div id="out" style="font-family:monospace;white-space:pre-wrap;padding:10px;border:1px solid #ccc"></div>
+<script>
+  var o = function (t) { document.getElementById('out').textContent += t + '\n'; };
+  o('window.CMS   : ' + (typeof window.CMS));
+  o('hash URL     : ' + (location.hash ? location.hash : '(kosong)'));
+  o('ada #invite? : ' + (location.hash.indexOf('invite_token') !== -1));
+  o('ada #confirm?: ' + (location.hash.indexOf('confirmation_token') !== -1));
+  // Cek apakah script Decap termuat dari CDN
+  var s = document.createElement('script');
+  s.src = 'https://unpkg.com/decap-cms@3.1.4/dist/decap-cms.js';
+  s.onload = function () { o('script dimuat: OK; window.CMS = ' + typeof window.CMS); };
+  s.onerror = function () { o('script dimuat: GAGAL'); };
+  document.body.appendChild(s);
+</script>
+</body>
+</html>
