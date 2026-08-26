@@ -98,16 +98,22 @@ def scrape_series(entry):
         'cover_url': mt.group(1) if mt else '',
         'chapters': parse_chapter_links(html, entry['url']),
     }
+def load_json_file(path):
+    """Baca JSON toleran BOM (utf-8-sig). BOM sering muncul dari editor Windows."""
+    try:
+        with open(path, encoding='utf-8-sig') as fh:
+            return json.load(fh)
+    except Exception:
+        return None
+
+
 def write_series(slug, data):
     """Tulis site-content/series/<slug>.json, pertahankan desc bila sudah ada."""
     path = os.path.join(SERIES_DIR, slug + '.json')
     existing = {}
-    if os.path.exists(path):
-        try:
-            with open(path, encoding='utf-8') as fh:
-                existing = json.load(fh)
-        except Exception:
-            existing = {}
+    prev = load_json_file(path)
+    if prev is not None:
+        existing = prev
     merged = {
         'slug': slug,
         'title': data.get('title') or existing.get('title') or slug,
@@ -136,9 +142,9 @@ def write_series(slug, data):
 def run():
     # kumpulkan daftar seri: sources.json (persisten) + manual-batch.txt (sekali pakai)
     entries = []
-    if os.path.exists(SRC):
-        with open(SRC, encoding='utf-8') as fh:
-            entries += json.load(fh)
+    src_data = load_json_file(SRC)
+    if src_data is not None:
+        entries += src_data
     manual_txt = os.path.join(ROOT, 'site-content', 'manual-batch.txt')
     if os.path.exists(manual_txt):
         with open(manual_txt, encoding='utf-8') as fh:
