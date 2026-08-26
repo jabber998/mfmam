@@ -137,7 +137,7 @@ def run():
     # kumpulkan daftar seri: sources.json (persisten) + manual-batch.txt (sekali pakai)
     entries = []
     if os.path.exists(SRC):
-        with open(SRC, encoding='utf-8') as fh:
+        with open("nama_file.json", "r", encoding="utf-8-sig") as fh:
             entries += json.load(fh)
     manual_txt = os.path.join(ROOT, 'site-content', 'manual-batch.txt')
     if os.path.exists(manual_txt):
