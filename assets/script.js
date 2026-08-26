@@ -62,64 +62,112 @@
       cix = document.getElementById('chap-search-input'),
       crx = document.getElementById('chap-search-results');
   if (cfx && cix && crx) {
-    // Bila halaman seri punya data-series, batasi pencarian ke seri itu.
     var seriesFilter = (csec && csec.getAttribute('data-series')) || '';
-    var chapterIndex = [];
-    fetch('/chapters-index.json').then(function(r){ return r.json(); })
-      .then(function(d){ chapterIndex = d || []; })
-      .catch(function(){});
-    function inSeries(d){
-      if (!seriesFilter) return true;
-      return (d.s || '').toLowerCase() === seriesFilter.toLowerCase();
-    }
-    function tokenHit(token, d){
-      if (!token) return true;
-      if (/^\d+$/.test(token)){
+    // --- MODE HALAMAN SERI: filter langsung daftar bab pada halaman ---
+    var chList = document.querySelector('nav.ch-list');
+    if (seriesFilter && chList) {
+      var rows = [].slice.call(chList.querySelectorAll('a.ch-row'));
+      var secTitle = null;
+      var titles = document.querySelectorAll('.seri-page .sec-title');
+      for (var i = 0; i < titles.length; i++){
+        if (/Daftar Bab/.test(titles[i].textContent)){ secTitle = titles[i]; break; }
+      }
+      function rowNumber(row){
+        var n = row.querySelector('.ch-no');
+        return n ? (n.textContent || '').trim() : '';
+      }
+      function rowTitle(row){
+        var t = row.querySelector('.ch-ti');
+        return t ? (t.textContent || '').trim() : '';
+      }
+      function rowHit(row, tokens){
+        var num = rowNumber(row);
+        var hay = (num + ' ' + rowTitle(row)).toLowerCase();
+        return tokens.every(function(t){
+          if (/^\d+$/.test(t)){
+            return num === t || (num.length > t.length && num.indexOf(t) === 0);
+          }
+          return hay.indexOf(t) !== -1;
+        });
+      }
+      function filterSeriesRows(q){
+        var tokens = (q || '').trim().toLowerCase().split(/\s+/).filter(Boolean);
+        if (!tokens.length){
+          rows.forEach(function(r){ r.style.display = ''; });
+          if (secTitle) secTitle.textContent = 'Daftar Bab (' + rows.length + ')';
+          crx.hidden = true; crx.innerHTML = '';
+          return;
+        }
+        var visible = 0;
+        rows.forEach(function(r){
+          if (rowHit(r, tokens)){ r.style.display = ''; visible++; }
+          else { r.style.display = 'none'; }
+        });
+        if (secTitle) secTitle.textContent = 'Daftar Bab (' + visible + ' / ' + rows.length + ')';
+        crx.innerHTML = '';
+        var msg = document.createElement('div');
+        msg.className = visible ? 'cs-count' : 'cs-empty';
+        msg.textContent = visible
+          ? visible + ' bab cocok untuk \u201c' + q + '\u201d.'
+          : 'Tidak ada bab yang cocok untuk \u201c' + q + '\u201d. Coba ketik nomor lain seperti 120 atau 50.';
+        crx.appendChild(msg);
+        crx.hidden = false;
+      }
+      cix.addEventListener('input', function(){ filterSeriesRows(cix.value); });
+      cfx.addEventListener('submit', function(e){ e.preventDefault(); filterSeriesRows(cix.value); });
+    } else {
+      // --- MODE HALAMAN DAFTAR (lintas semua manhwa): kotak hasil ---
+      var chapterIndex = [];
+      fetch('/chapters-index.json').then(function(r){ return r.json(); })
+        .then(function(d){ chapterIndex = d || []; })
+        .catch(function(){});
+      function tokenHit(token, d){
+        if (!token) return true;
         var ts = d.n != null ? String(d.n) : '';
-        return ts === token || (ts.length > token.length && ts.indexOf(token) === 0);
+        if (/^\d+$/.test(token)) return ts === token || (ts.length > token.length && ts.indexOf(token) === 0);
+        if (/^\d+\.\d+$/.test(token)) return d.n != null && String(d.n) === token;
+        var hay = (d.s + ' ' + d.t).toLowerCase();
+        return hay.indexOf(token) !== -1;
       }
-      if (/^\d+\.\d+$/.test(token)) return d.n != null && String(d.n) === token;
-      var hay = (d.s + ' ' + d.t).toLowerCase();
-      return hay.indexOf(token) !== -1;
-    }
-    function renderChap(q){
-      var tokens = (q || '').trim().toLowerCase().split(/\s+/).filter(Boolean);
-      crx.innerHTML = '';
-      if (!tokens.length){ crx.hidden = true; return; }
-      var res = chapterIndex.filter(function(d){
-        return inSeries(d) && tokens.every(function(t){ return tokenHit(t, d); });
-      });
-      res.sort(function(a, b){
-        var as = a.s.toLowerCase().indexOf(q) === 0 ? 0
-               : (a.s.toLowerCase().indexOf(q) !== -1 ? 1 : 2);
-        var bs = b.s.toLowerCase().indexOf(q) === 0 ? 0
-               : (b.s.toLowerCase().indexOf(q) !== -1 ? 1 : 2);
-        if (as !== bs) return as - bs;
-        return (b.n || 0) - (a.n || 0);
-      });
-      var count = document.createElement('div');
-      count.className = 'cs-count';
-      count.textContent = res.length + ' bab ditemukan untuk \u201c' + q + '\u201d.';
-      crx.appendChild(count);
-      res.slice(0, 50).forEach(function(d){
-        var a = document.createElement('a');
-        a.className = 'cs-row'; a.href = d.u;
-        var n = document.createElement('span'); n.className = 'cs-n';
-        n.textContent = d.n != null ? d.n : '';
-        var t = document.createElement('span'); t.className = 'cs-t'; t.textContent = d.t;
-        var s = document.createElement('span'); s.className = 'cs-s'; s.textContent = d.s;
-        a.appendChild(n); a.appendChild(t); a.appendChild(s);
-        crx.appendChild(a);
-      });
-      if (!res.length){
-        var e = document.createElement('div');
-        e.className = 'cs-empty';
-        e.textContent = 'Tidak ada bab yang cocok. Coba nama manhwa lain atau nomor bab (mis. 120).';
-        crx.appendChild(e);
+      function renderChap(q){
+        var tokens = (q || '').trim().toLowerCase().split(/\s+/).filter(Boolean);
+        crx.innerHTML = '';
+        if (!tokens.length){ crx.hidden = true; return; }
+        var res = chapterIndex.filter(function(d){
+          return tokens.every(function(t){ return tokenHit(t, d); });
+        });
+        res.sort(function(a, b){
+          var as = a.s.toLowerCase().indexOf(q) === 0 ? 0
+                 : (a.s.toLowerCase().indexOf(q) !== -1 ? 1 : 2);
+          var bs = b.s.toLowerCase().indexOf(q) === 0 ? 0
+                 : (b.s.toLowerCase().indexOf(q) !== -1 ? 1 : 2);
+          if (as !== bs) return as - bs;
+          return (b.n || 0) - (a.n || 0);
+        });
+        var count = document.createElement('div');
+        count.className = 'cs-count';
+        count.textContent = res.length + ' bab ditemukan untuk \u201c' + q + '\u201d.';
+        crx.appendChild(count);
+        res.slice(0, 50).forEach(function(d){
+          var a = document.createElement('a');
+          a.className = 'cs-row'; a.href = d.u;
+          var n = document.createElement('span'); n.className = 'cs-n';
+          n.textContent = d.n != null ? d.n : '';
+          var t = document.createElement('span'); t.className = 'cs-t'; t.textContent = d.t;
+          var s = document.createElement('span'); s.className = 'cs-s'; s.textContent = d.s;
+          a.appendChild(n); a.appendChild(t); a.appendChild(s);
+          crx.appendChild(a);
+        });
+        if (!res.length){
+          var e = document.createElement('div');
+          e.className = 'cs-empty';
+          e.textContent = 'Tidak ada bab yang cocok. Coba nama manhwa lain atau nomor bab (mis. 120).';
+          crx.appendChild(e);
+        }
+        crx.hidden = false;
       }
-      crx.hidden = false;
+      cfx.addEventListener('submit', function(e){ e.preventDefault(); renderChap(cix.value); });
+      cix.addEventListener('input', function(){ renderChap(cix.value); });
     }
-    cfx.addEventListener('submit', function(e){ e.preventDefault(); renderChap(cix.value); });
-    cix.addEventListener('input', function(){ renderChap(cix.value); });
   }
 })();
