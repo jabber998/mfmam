@@ -7,8 +7,20 @@
   <title>Admin - Mfmam</title>
 </head>
 <body>
-  <!-- Halaman admin untuk situs statis (Decap CMS).
-       Dihidangkan Netlify dari https://mfmam.netlify.app/admin/ -->
-  <script src="https://unpkg.com/decap-cms@^3.0.0/dist/decap-cms.js"></script>
+  <!-- Halaman admin untuk situs statis (Decap CMS / Netlify CMS).
+       Berjalan di browser; token undangan/konfirmasi di hash (#invite_token,
+       #confirmation_token, #recovery_token) diproses otomatis oleh Decap. -->
+  <script src="https://unpkg.com/decap-cms@3.1.4/dist/decap-cms.js"></script>
+  <script>
+    // Pastikan script Decap benar-benar termuat sebelum kita lanjut.
+    window.addEventListener('load', function (e) {
+      setTimeout(function () {
+        if (!window.CMS) {
+          document.body.innerHTML += '<p style="font-family:sans-serif;color:#b00;padding:20px">' +
+            'Gagal memuat deccap-cms.js. Periksa koneksi internet / coba muat ulang.</p>';
+        }
+      }, 3000);
+    });
+  </script>
 </body>
 </html>
