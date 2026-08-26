@@ -7,17 +7,15 @@
   <title>Admin - Mfmam</title>
 </head>
 <body>
-  <!-- Halaman admin untuk situs statis (Decap CMS / Netlify CMS).
-       Berjalan di browser; token undangan/konfirmasi di hash (#invite_token,
-       #confirmation_token, #recovery_token) diproses otomatis oleh Decap. -->
-  <script src="https://unpkg.com/decap-cms@3.1.4/dist/decap-cms.js"></script>
+  <!-- Admin Netlify CMS (v2 klasik) — kompatibel penuh dengan Netlify Identity.
+       Memroses #invite_token, #confirmation_token, #recovery_token tanpa hash routing v3. -->
+  <script src="https://unpkg.com/netlify-cms@2.10.192/dist/netlify-cms.js"></script>
   <script>
-    // Pastikan script Decap benar-benar termuat sebelum kita lanjut.
-    window.addEventListener('load', function (e) {
+    window.addEventListener('load', function () {
       setTimeout(function () {
         if (!window.CMS) {
           document.body.innerHTML += '<p style="font-family:sans-serif;color:#b00;padding:20px">' +
-            'Gagal memuat deccap-cms.js. Periksa koneksi internet / coba muat ulang.</p>';
+            'Gagal memuat netlify-cms.js. Periksa koneksi internet / coba muat ulang.</p>';
         }
       }, 3000);
     });
