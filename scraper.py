@@ -354,7 +354,66 @@ def write_series(slug, data):
     return len(merged_ch)
 
 
-# ---------------------------------------------------------------- runner
+# ---------------------------------------------------------------- halaman daftar / listing
+
+
+# Path direktori berisi daftar banyak manga (mis. /komik/, /komik/page/2/).
+LISTING_PATH_RE = re.compile(
+    r'/((?:komik|komikindo|manga|manhwa|series|daftar-komik|manga-list)'
+    r'(?:/page/\d+)?/?)$', re.I)
+
+
+def is_listing_url(url):
+    """Benar bila URL menunjuk ke halaman direktori (daftar manga), bukan ke satu
+    halaman seri. Contoh: https://komikindo.ch/komik/ -> True."""
+    if not url:
+        return False
+    return bool(LISTING_PATH_RE.search(url.rstrip('/')))
+
+
+def parse_list_links(html, base_url):
+    """Ekstrak link ke halaman seri dari halaman direktori.
+    Bentuk: .../komik/<slug>/ ; mengabaikan link pagination (/komik/page/N/)."""
+    out, seen = [], set()
+    for m in re.finditer(r'<a\b[^>]*href="([^"]+)"', html):
+        href = urljoin(base_url, m.group(1))
+        mm = re.search(r'/(?:komik|manga|series)/([^/.]+?)/?$', href)
+        if not mm:
+            continue
+        seg = mm.group(1)
+        if seg == 'page':
+            continue  # pagination /komik/page/N/
+        if href in seen:
+            continue
+        seen.add(href)
+        slug = seg
+        sx = re.match(r'^(\d+)-(.+)$', slug)
+        if sx:
+            slug = sx.group(2)          # 846048-eleceed -> eleceed
+        if not slug or slug in ('page',):
+            continue
+        title = ' '.join(w.capitalize() for w in slug.split('-'))
+        out.append({'url': href, 'slug': slug, 'title': title})
+    return out
+
+
+def expand_seed(entry, want_images):
+    """Kalau entry berupa halaman daftar, scan & kembalikan daftar manga-nya;
+    selain itu kembalikan entry itu sendiri (halaman seri)."""
+    url = entry.get('url') or ''
+    if not is_listing_url(url) and not entry.get('listing', False):
+        return [entry]
+    try:
+        html = fetch(url)
+    except Exception as ex:
+        print('   ! gagal scan halaman daftar %s: %s' % (url, ex))
+        return [entry]
+    links = parse_list_links(html, url)
+    if not links:
+        print('   ! tidak ada link manga di %s (diproses sebagai halaman seri).' % url)
+        return [entry]
+    print('   -> halaman daftar: %d manga ditemukan di %s' % (len(links), url))
+    return links
 
 
 def run():
@@ -367,15 +426,16 @@ def run():
         entries += src_data
     manual_txt = os.path.join(ROOT, 'site-content', 'manual-batch.txt')
     if os.path.exists(manual_txt):
-        with open(manual_txt, encoding='utf-8') as fh:
+        with open(manual_txt, encoding='utf-8-sig') as fh:
             for line in fh:
                 url = line.strip()
+                if url.startswith('\ufeff'):
+                    url = url[1:].strip()
                 if not url or not url.startswith('http'):
                     continue
-                # Lewati URL tanpa path (mis. homepage "https://site.com/") —
-                # scraping homepage hanya menghasilkan bab acak dari banyak seri.
+                # Lewati URL tanpa path (mis. homepage "https://site.com/").
                 if not re.search(r'https?://[^/]+/[^/]+', url):
-                    print('   ! lewati URL tanpa path (bukan halaman seri): %s' % url)
+                    print('   ! lewati URL tanpa path (bukan halaman seri/daftar): %s' % url)
                     continue
                 seg = [s for s in url.rstrip('/').split('/') if s]
                 hint = seg[-1] if seg else 'manga'
@@ -383,17 +443,33 @@ def run():
                 if mm:
                     hint = mm.group(2)      # mis. 846048-eleceed -> eleceed
                 title = ' '.join(x.capitalize() for x in hint.split('-'))
-                entries.append({'url': url, 'slug': hint, 'title': title})
+                entries.append({'url': url, 'slug': hint, 'title': title,
+                                'listing': is_listing_url(url)})
     if not entries:
         print('Tidak ada sumber (sources.json kosong & tanpa URL manual).')
-        print('Isi sources.json, atau tempel URL lewat form Action.')
+        print('Isi sources.json, atau tempel URL halaman seri / halaman daftar '
+              'lewat form Action.')
         return 0
+
+    # Expand halaman daftar -> daftar manga (scan sesuai batch nanti).
+    expanded = []
+    for e in entries:
+        sub = expand_seed(e, want_images)
+        for s in sub:
+            if s['url'] not in [x.get('url') for x in expanded]:
+                expanded.append(s)
+    entries = expanded
+
     limit = None
     b = os.environ.get('BATCH_LIMIT', '')
     if b.isdigit():
         limit = int(b)
     if limit:
         entries = entries[:limit]
+    if not entries:
+        print('Tidak ada manga untuk diproses setelah scan.')
+        return 0
+
     total_ch = 0
     for i, e in enumerate(entries, 1):
         print('[%d/%d] %s' % (i, len(entries), e.get('url')))
