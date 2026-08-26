@@ -60,6 +60,29 @@ display:-webkit-box;-webkit-line-clamp:2;line-clamp:2;-webkit-box-orient:vertica
 .more-btn{display:inline-block;background:var(--card);border:1px solid var(--line);
 padding:10px 20px;border-radius:8px;color:var(--fg);font-weight:600}
 
+/* cari bab (halaman daftar manhwa) */
+.chapter-search{background:var(--card);border:1px solid var(--line);
+border-radius:var(--radius);padding:18px;margin:6px 0 26px}
+.chapter-search .sec-title{margin:0 0 12px}
+.cs-label{display:block;color:var(--muted);font-size:.85rem;margin-bottom:10px}
+.cs-field{display:flex;gap:10px}
+.cs-field input{flex:1;min-width:0;background:var(--bg2);border:1px solid var(--line);
+border-radius:8px;color:var(--fg);padding:11px 14px;font-size:.95rem;outline:none}
+.cs-field input:focus{border-color:var(--accent)}
+.cs-btn{background:var(--accent);border:none;border-radius:8px;color:#fff;font-weight:700;
+padding:11px 20px;cursor:pointer;font-size:.95rem;white-space:nowrap}
+.cs-btn:hover{opacity:.9}
+.cs-results{max-height:420px;overflow:auto;margin-top:12px;border:1px solid var(--line);
+border-radius:8px;background:var(--bg2)}
+.cs-count{color:var(--muted);font-size:.8rem;padding:10px 14px;border-bottom:1px solid var(--line)}
+.cs-row{display:flex;gap:12px;align-items:baseline;padding:10px 14px;
+border-top:1px solid var(--line);color:var(--fg)}
+.cs-row:hover{background:var(--card)}
+.cs-s{flex:none;font-weight:700;font-size:.85rem;color:var(--muted)}
+.cs-t{flex:1;color:var(--fg);font-size:.9rem}
+.cs-n{color:var(--accent);font-weight:700;font-size:.82rem;min-width:34px;text-align:right}
+.cs-empty{color:var(--muted);padding:14px;font-size:.9rem}
+
 /* series page */
 .seri-page{margin-top:8px}
 .seri-head{display:flex;gap:22px;flex-wrap:wrap;align-items:flex-start}
@@ -81,7 +104,7 @@ border:1px solid var(--line);padding:10px 14px;border-radius:8px;color:var(--fg)
 .ch-row:hover{border-color:var(--accent)}
 .empty{color:var(--muted)}
 /* reader */
-.reader{max-width:860px;margin:0 auto}
+.reader{max-width:900px;margin:0 auto}
 .reader-top{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;align-items:center}
 .reader-crumb{color:var(--muted);font-size:.85rem;margin-bottom:12px}
 .reader-title{font-size:1.35rem;margin:6px 0 16px}
@@ -135,8 +158,9 @@ line-height:1.3;display:-webkit-box;-webkit-line-clamp:1;line-clamp:1;
 border:1px solid var(--line);border-radius:12px;padding:28px 20px;
 text-align:center;color:var(--muted)}
 .reader-src p{margin-bottom:14px}
-.reader-images img{display:block;max-width:780px;width:100%;margin:0 auto 14px;
-border-radius:6px;background:#000}
+.reader-images{line-height:0}
+.reader-images img{display:block;max-width:820px;width:100%;height:auto;
+margin:0 auto;border-radius:0;background:#000}
 .reader .chap-list{margin-bottom:6px}
 .n404{text-align:center;padding:60px 0}
 .n404 h1{font-size:4rem;color:var(--accent)}
@@ -145,4 +169,11 @@ border-radius:6px;background:#000}
   .main-nav{display:none}
   .main-nav.open{display:block;flex-basis:100%}
   .hero{height:280px}
+  .reader{max-width:100%}
+  .reader .reader-content, .reader-images{margin-left:-16px;margin-right:-16px}
+  .reader-images img{max-width:none}
+}
+@media (max-width:480px){
+  .cs-field{flex-direction:column}
+  .cs-btn{width:100%}
 }
