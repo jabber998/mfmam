@@ -34,6 +34,11 @@ def esc(s):
 
 
 def render_page(title, body, site, tagline, extra=''):
+    # netlify-identity-widget: wajib di halaman root agar tautan undangan/
+    # konfirmasi/reset dari Netlify Identity (#invite_token, #confirmation_token,
+    # #recovery_token) bisa ditangkap dan memunculkan form-nya.
+    widget = ('<script src="https://unpkg.com/netlify-identity-widget@1.9.2/build/'
+              'netlify-identity-widget.js"></script>')
     return ('<!DOCTYPE html>\n<html lang="id"><head><meta charset="utf-8">'
             '<meta name="viewport" content="width=device-width, initial-scale=1">'
             '<title>%s</title><link rel="icon" href="/assets/logo.png">'
@@ -47,9 +52,9 @@ def render_page(title, body, site, tagline, extra=''):
             '<li><a href="/kontak/">Kontak</a></li></ul></nav></div></header>'
             '<main class="container main">%s</main>'
             '<footer class="site-footer"><div class="container footer-inner">'
-            '<p>&copy; %s %s &mdash; %s</p></footer></body></html>'
+            '<p>&copy; %s %s &mdash; %s</p></footer>%s</body></html>'
             % (esc(title), extra, esc(site), body, time.strftime('%Y'),
-               esc(site), esc(tagline)))
+               esc(site), esc(tagline), widget))
 
 
 def write(path, content):

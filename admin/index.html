@@ -7,15 +7,19 @@
   <title>Admin - Mfmam</title>
 </head>
 <body>
-  <!-- Admin Netlify CMS (v2 klasik) — kompatibel penuh dengan Netlify Identity.
-       Memroses #invite_token, #confirmation_token, #recovery_token tanpa hash routing v3. -->
+  <!-- Admin Netlify CMS (v2 klasik) - kompatibel Netlify Identity -->
   <script src="https://unpkg.com/netlify-cms@2.10.192/dist/netlify-cms.js"></script>
+  <!-- netlify-identity-widget: menangkap #invite_token / #confirmation_token /
+       #recovery_token dari tautan email serta menampilkan form login/set-password -->
+  <script src="https://unpkg.com/netlify-identity-widget@1.9.2/build/netlify-identity-widget.js"></script>
   <script>
     window.addEventListener('load', function () {
       setTimeout(function () {
-        if (!window.CMS) {
-          document.body.innerHTML += '<p style="font-family:sans-serif;color:#b00;padding:20px">' +
-            'Gagal memuat netlify-cms.js. Periksa koneksi internet / coba muat ulang.</p>';
+        if (!window.netlifyIdentity) {
+          var p = document.createElement('p');
+          p.style.cssText = 'font-family:sans-serif;color:#b00;padding:20px';
+          p.textContent = 'Gagal memuat netlify-identity-widget.js. Coba muat ulang.';
+          document.body.appendChild(p);
         }
       }, 3000);
     });
