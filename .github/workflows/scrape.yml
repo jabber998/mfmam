@@ -38,9 +38,10 @@ jobs:
           mkdir -p site-content
           printf '%s\n' "$BATCH" | tr -d '\r' > site-content/manual-batch.txt
 
-      - name: Jalankan scraper (judul bab + link, tanpa gambar)
+      - name: Jalankan scraper (info seri + bab + gambar, incremental)
         env:
           BATCH_LIMIT: ${{ inputs.batch }}
+          SCRAPE_IMAGES: "1"
         run: |
           python scraper.py
 
@@ -49,14 +50,24 @@ jobs:
         run: |
           rm -f site-content/manual-batch.txt
 
-      - name: Commit & push hasil (bila ada perubahan)
+      - name: Commit & push hasil (tahan "fetch first" / race)
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
           if git diff --cached --quiet; then
             echo "Tidak ada perubahan - selesai."
-          else
-            git commit -m "chore: update katalog dari scraper [skip netlify]"
-            git push
+            exit 0
           fi
+          git commit -m "chore: update katalog dari scraper"
+          # Coba push; jika ditolak karena remote maju (race), tarik ulang lalu ulangi.
+          for i in 1 2 3 4 5; do
+            if git push; then
+              echo "Push berhasil."
+              exit 0
+            fi
+            echo "Push ditolak (percobaan $i), tarik ulang perubahan remote..."
+            git pull --rebase --autostash || true
+          done
+          echo "Push masih gagal setelah beberapa percobaan."
+          exit 1

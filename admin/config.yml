@@ -47,8 +47,14 @@ collections:
     fields:
       - { label: "Slug seri (folder), mis. eleceed", name: "slug", widget: "string" }
       - { label: "Judul", name: "title", widget: "string" }
-      - { label: "Deskripsi", name: "desc", widget: "text" }
-      - { label: "Genre (koma)", name: "genres", widget: "list" }
+      - { label: "Deskripsi / Sinopsis", name: "desc", widget: "text" }
+      - { label: "Status (mis. Berjalan/Selesai)", name: "status", widget: "string", required: false }
+      - { label: "Jenis (Manhwa/Manga/Manhua)", name: "type", widget: "string", required: false }
+      - { label: "Pengarang", name: "author", widget: "string", required: false }
+      - { label: "Ilustrator", name: "illustrator", widget: "string", required: false }
+      - { label: "Judul Alternatif", name: "alt_title", widget: "string", required: false }
+      - { label: "Tema (dipisah koma)", name: "keywords", widget: "string", required: false }
+      - { label: "Genre", name: "genres", widget: "list", required: false }
       - { label: "URL sampul", name: "cover_url", widget: "string", required: false }
       - label: "Daftar Bab"
         name: "chapters"
@@ -59,3 +65,4 @@ collections:
           - { label: "Slug bab", name: "slug", widget: "string" }
           - { label: "Nomor", name: "num", widget: "number", required: false }
           - { label: "URL sumber", name: "external", widget: "string", required: false }
+          - { label: "URL gambar (diisi scraper, satu per baris)", name: "images", widget: "list", required: false }
