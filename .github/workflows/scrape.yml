@@ -2,9 +2,19 @@ name: Scraper Otomatis Mfmam
 
 on:
   schedule:
-    # UTC; 03:35 UTC = 10:35 WIB (sesuaikan bila perlu). Jalankan tiap 6 jam.
+    # UTC; 03:35 & 09:35 & 15:35 & 21:35 UTC (tiap 6 jam).
     - cron: "35 */6 * * *"
-  workflow_dispatch: {}   # izinkan trigger manual dari tab Actions
+  workflow_dispatch:
+    inputs:
+      urls:
+        description: "Tempel URL manga (satu per baris). Kosongkan untuk memakai sources.json."
+        required: false
+        type: string
+      batch:
+        description: "Jumlah manga yang diproses dalam batch ini."
+        required: false
+        type: number
+        default: 20
 
 jobs:
   scrape:
@@ -20,9 +30,24 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Tulis URL manual (bila diisi di form)
+        if: github.event_name == 'workflow_dispatch' && inputs.urls != ''
+        env:
+          BATCH: ${{ inputs.urls }}
+        run: |
+          mkdir -p site-content
+          printf '%s\n' "$BATCH" | tr -d '\r' > site-content/manual-batch.txt
+
       - name: Jalankan scraper (judul bab + link, tanpa gambar)
+        env:
+          BATCH_LIMIT: ${{ inputs.batch }}
         run: |
           python scraper.py
+
+      - name: Bersihkan file manual batch (sekali pakai)
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          rm -f site-content/manual-batch.txt
 
       - name: Commit & push hasil (bila ada perubahan)
         run: |

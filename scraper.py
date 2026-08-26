@@ -134,15 +134,37 @@ def write_series(slug, data):
 
 
 def run():
-    if not os.path.exists(SRC):
-        print('[!] site-content/sources.json belum ada. Contoh:')
-        print('    [ {"slug":"eleceed","url":"https://WEB/manga/eleceed/","title":"Eleceed"} ]')
+    # kumpulkan daftar seri: sources.json (persisten) + manual-batch.txt (sekali pakai)
+    entries = []
+    if os.path.exists(SRC):
+        with open(SRC, encoding='utf-8') as fh:
+            entries += json.load(fh)
+    manual_txt = os.path.join(ROOT, 'site-content', 'manual-batch.txt')
+    if os.path.exists(manual_txt):
+        with open(manual_txt, encoding='utf-8') as fh:
+            for line in fh:
+                url = line.strip()
+                if not url or url.startswith(('http', 'https')) is False:
+                    continue
+                try:
+                    seg = [s for s in url.rstrip('/').split('/') if s]
+                    hint = seg[-1] if seg else 'manga'
+                except Exception:
+                    hint = 'manga'
+                entries.append({'url': url, 'slug': hint, 'title': hint})
+    if not entries:
+        print('[!] tidak ada sumber: isi site-content/sources.json atau tempel URL manual.')
         return 1
-    with open(SRC, encoding='utf-8') as fh:
-        sources = json.load(fh)
+    # batas batch (default: semua)
+    limit = None
+    b = os.environ.get('BATCH_LIMIT', '')
+    if b.isdigit():
+        limit = int(b)
+    if limit:
+        entries = entries[:limit]
     total_ch = 0
-    for i, e in enumerate(sources, 1):
-        print('[%d/%d] %s' % (i, len(sources), e.get('url')))
+    for i, e in enumerate(entries, 1):
+        print('[%d/%d] %s' % (i, len(entries), e.get('url')))
         try:
             m = scrape_series(e)
         except Exception as ex:
@@ -155,7 +177,7 @@ def run():
         print('   -> seri %s, %d bab' % (slug, n))
         time.sleep(DELAY)
     print('selesai: %d seri diproses, %d bab taut ditulis ke site-content/series/'
-          % (len(sources), total_ch))
+          % (len(entries), total_ch))
     return 0
 
 
