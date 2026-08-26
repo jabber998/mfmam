@@ -55,4 +55,64 @@
       if (!out.length){ var e = document.createElement('div'); e.className = 'sr'; e.textContent = 'Tidak ditemukan.'; res.appendChild(e); }
     });
   }
+
+  // cari bab (halaman daftar manhwa): temukan bab yang ingin dibaca
+  var cfx = document.getElementById('chap-search-form'),
+      cix = document.getElementById('chap-search-input'),
+      crx = document.getElementById('chap-search-results');
+  if (cfx && cix && crx) {
+    var chapterIndex = [];
+    fetch('/chapters-index.json').then(function(r){ return r.json(); })
+      .then(function(d){ chapterIndex = d || []; })
+      .catch(function(){});
+    function tokenHit(token, d){
+      if (!token) return true;
+      if (/^\d+$/.test(token)){
+        var ts = d.n != null ? String(d.n) : '';
+        return ts === token || (ts.length > token.length && ts.indexOf(token) === 0);
+      }
+      if (/^\d+\.\d+$/.test(token)) return d.n != null && String(d.n) === token;
+      var hay = (d.s + ' ' + d.t).toLowerCase();
+      return hay.indexOf(token) !== -1;
+    }
+    function renderChap(q){
+      var tokens = (q || '').trim().toLowerCase().split(/\s+/).filter(Boolean);
+      crx.innerHTML = '';
+      if (!tokens.length){ crx.hidden = true; return; }
+      var res = chapterIndex.filter(function(d){
+        return tokens.every(function(t){ return tokenHit(t, d); });
+      });
+      res.sort(function(a, b){
+        var as = a.s.toLowerCase().indexOf(q) === 0 ? 0
+               : (a.s.toLowerCase().indexOf(q) !== -1 ? 1 : 2);
+        var bs = b.s.toLowerCase().indexOf(q) === 0 ? 0
+               : (b.s.toLowerCase().indexOf(q) !== -1 ? 1 : 2);
+        if (as !== bs) return as - bs;
+        return (b.n || 0) - (a.n || 0);
+      });
+      var count = document.createElement('div');
+      count.className = 'cs-count';
+      count.textContent = res.length + ' bab ditemukan untuk \u201c' + q + '\u201d.';
+      crx.appendChild(count);
+      res.slice(0, 50).forEach(function(d){
+        var a = document.createElement('a');
+        a.className = 'cs-row'; a.href = d.u;
+        var n = document.createElement('span'); n.className = 'cs-n';
+        n.textContent = d.n != null ? d.n : '';
+        var t = document.createElement('span'); t.className = 'cs-t'; t.textContent = d.t;
+        var s = document.createElement('span'); s.className = 'cs-s'; s.textContent = d.s;
+        a.appendChild(n); a.appendChild(t); a.appendChild(s);
+        crx.appendChild(a);
+      });
+      if (!res.length){
+        var e = document.createElement('div');
+        e.className = 'cs-empty';
+        e.textContent = 'Tidak ada bab yang cocok. Coba nama manhwa lain atau nomor bab (mis. 120).';
+        crx.appendChild(e);
+      }
+      crx.hidden = false;
+    }
+    cfx.addEventListener('submit', function(e){ e.preventDefault(); renderChap(cix.value); });
+    cix.addEventListener('input', function(){ renderChap(cix.value); });
+  }
 })();

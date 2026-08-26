@@ -174,6 +174,41 @@ def chapter_body(c, s):
     return '<p><em>Konten kosong.</em></p>'
 
 
+def chapter_index(series):
+    """Indeks seluruh bab (lintas seri) untuk pencarian bab di halaman daftar.
+    Setiap item: {s: judul seri, t: judul bab, n: nomor bab, u: url bab}."""
+    out = []
+    for s in series:
+        st = s.get('title') or s.get('slug')
+        for c in (s.get('chapters') or []):
+            num = c.get('num')
+            if c.get('title'):
+                t = c['title']
+            elif num is not None:
+                t = 'Chapter %s' % num
+            else:
+                t = 'Chapter'
+            out.append({'s': st, 't': t, 'n': num,
+                        'u': '/%s/' % (c.get('slug') or '')})
+    return out
+
+
+def chapter_search_ui():
+    """Kolom pencarian bab untuk halaman daftar manhwa."""
+    return ('<section class="chapter-search" id="chapter-search">'
+            '<h2 class="sec-title">Cari Bab untuk Dibaca</h2>'
+            '<form class="cs-form" id="chap-search-form" role="search">'
+            '<label for="chap-search-input" class="cs-label">Ketik judul '
+            'manhwa atau nomor bab (mis. Eleceed, 120, bab 50):</label>'
+            '<div class="cs-field">'
+            '<input id="chap-search-input" type="search" autocomplete="off" '
+            'value="" placeholder="Ketik nama manhwa / nomor bab…">'
+            '<button type="submit" class="cs-btn">Cari &#128269;</button>'
+            '</div></form>'
+            '<div id="chap-search-results" class="cs-results" hidden></div>'
+            '</section>')
+
+
 def build():
     settings = load_json(os.path.join(CONTENT, 'settings.json'),
                          {'site_name': 'Mfmam', 'tagline': 'Baca Komik Manhwa'})
@@ -208,13 +243,18 @@ def build():
     body_home += ('<div class="more-wrap"><a class="more-btn" '
                   'href="/daftar-komik/">Lihat Semua &#8594;</a></div>')
     write('index.html', render_page(site, body_home, site, tagline))
+    cs_ui = chapter_search_ui()
     write('daftar-komik/index.html',
           render_page('Daftar Manhwa - %s' % site,
                       '<h1 class="page-title">Daftar Manhwa</h1>'
-                      '<p class="count-line">Total %d judul. Klik sampul untuk '
-                      'detail &amp; daftar bab.</p>'
+                      '<p class="count-line">Total %d judul. Gunakan kolom '
+                      'pencarian untuk langsung menuju bab yang ingin dibaca, '
+                      'atau klik sampul untuk detail &amp; daftar bab.</p>'
+                      '%s'
                       '<div class="manga-grid">%s</div>'
-                      % (len(series), cards), site, tagline))
+                      % (len(series), cs_ui, cards), site, tagline))
+    write('chapters-index.json',
+          json.dumps(chapter_index(series), ensure_ascii=False))
 
     gmap = {}
     for s in series:
