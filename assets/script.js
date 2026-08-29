@@ -84,8 +84,10 @@
         var num = rowNumber(row);
         var hay = (num + ' ' + rowTitle(row)).toLowerCase();
         return tokens.every(function(t){
-          if (/^\d+$/.test(t)){
-            return num === t || (num.length > t.length && num.indexOf(t) === 0);
+          // angka: cocokkan bila nomor bab MENGANDUNG angka tsb (substring),
+          // mis. ketik "10" -> 10, 100-109, 110, 210, 310, 410, dst.
+          if (/^\d+(\.\d+)?$/.test(t)){
+            return num.indexOf(t) !== -1;
           }
           return hay.indexOf(t) !== -1;
         });
@@ -124,8 +126,9 @@
       function tokenHit(token, d){
         if (!token) return true;
         var ts = d.n != null ? String(d.n) : '';
-        if (/^\d+$/.test(token)) return ts === token || (ts.length > token.length && ts.indexOf(token) === 0);
-        if (/^\d+\.\d+$/.test(token)) return d.n != null && String(d.n) === token;
+        // angka: cocokkan bila nomor bab MENGANDUNG angka tsb (substring),
+        // mis. ketik "10" -> 10, 100-109, 110, 210, 410, dst.
+        if (/^\d+(\.\d+)?$/.test(token)) return ts.indexOf(token) !== -1;
         var hay = (d.s + ' ' + d.t).toLowerCase();
         return hay.indexOf(token) !== -1;
       }
