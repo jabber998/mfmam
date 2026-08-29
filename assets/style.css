@@ -161,6 +161,7 @@ font-weight:700;padding:3px 10px;border-radius:20px;margin:2px 6px 2px 0}
 .manga-card .mc-meta{color:var(--muted);font-size:.72rem;padding:0 10px 10px;
 line-height:1.3;display:-webkit-box;-webkit-line-clamp:1;line-clamp:1;
 -webkit-box-orient:vertical;overflow:hidden}
+.mc-update{color:var(--accent);font-size:.68rem;font-weight:600;padding:0 10px 8px}
 .ch-row .ch-ti{flex:1;color:var(--fg)}
 .reader-src{max-width:520px;margin:30px auto;background:var(--card);
 border:1px solid var(--line);border-radius:12px;padding:28px 20px;

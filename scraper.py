@@ -79,6 +79,41 @@ META_DESC_RE = re.compile(
 INFO_ROW_RE = re.compile(r'<b>\s*(.*?)\s*</b>\s*(.*?)(?=<b>\s*|$)',
                          re.I | re.S)
 
+# Tanggal update terakhir, dikutip dari halaman seri sumber.
+# Prioritas: kalimat "Update chapter terbaru komik X adalah tanggal Agustus 25, 2026."
+# lalu meta article:modified_time / og:updated_time (format ISO), lalu <time datetime>.
+UPD_TXT_RE = re.compile(
+    r'Update\s+chapter\s+terbaru\s+komik\b.*?\badalah\s+tanggal\s+'
+    r'([A-Za-z]+)\s+(\d{1,2}),\s+(\d{4})', re.I | re.S)
+UPD_META_RE = re.compile(
+    r'<meta[^>]+(?:article:modified_time|og:updated_time)[^>]+'
+    r'content="(\d{4}-\d{2}-\d{2})', re.I)
+UPD_TIME_RE = re.compile(
+    r'<time\b[^>]*datetime="(\d{4}-\d{2}-\d{2})"', re.I)
+
+# Nama bulan (sumber memakai Bahasa Indonesia / Inggris) -> nomor bulan.
+MONTH_NUM = {
+    'januari': 1, 'februari': 2, 'maret': 3, 'april': 4, 'mei': 5, 'juni': 6,
+    'juli': 7, 'agustus': 8, 'september': 9, 'oktober': 10, 'november': 11,
+    'desember': 12,
+    'january': 1, 'february': 2, 'march': 3, 'april': 4, 'may': 5, 'june': 6,
+    'july': 7, 'august': 8, 'september': 9, 'october': 10, 'november': 11,
+    'december': 12,
+}
+
+
+def extract_last_updated(html):
+    """Kembalikan tanggal update terakhir `YYYY-MM-DD` dari halaman seri sumber."""
+    m = UPD_TXT_RE.search(html)
+    if m:
+        mo = MONTH_NUM.get(m.group(1).strip().lower())
+        if mo:
+            return '%04d-%02d-%02d' % (int(m.group(3)), mo, int(m.group(2)))
+    m = UPD_META_RE.search(html) or UPD_TIME_RE.search(html)
+    if m:
+        return m.group(1)
+    return ''
+
 # label di halaman sumber -> kunci JSON (dinormalisasi huruf kecil).
 INFO_KEYMAP = {
     'status': 'status',
@@ -315,6 +350,7 @@ def scrape_series(entry, want_images):
         'alt_title': info.get('alt_title', ''),
         'genres': genres,
         'cover_url': mt.group(1) if mt else '',
+        'last_updated': extract_last_updated(html),
         'chapters': chapters,
     }
 
@@ -355,6 +391,7 @@ def write_series(slug, data):
         'alt_title': data.get('alt_title') or prev.get('alt_title') or '',
         'genres': data.get('genres') or prev.get('genres') or [],
         'cover_url': data.get('cover_url') or prev.get('cover_url') or '',
+        'last_updated': data.get('last_updated') or prev.get('last_updated') or '',
         'chapters': merged_ch,
     }
     os.makedirs(SERIES_DIR, exist_ok=True)

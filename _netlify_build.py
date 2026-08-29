@@ -43,6 +43,25 @@ def fmt_num(n):
         return n
 
 
+BULAN_ID = ['', 'Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun',
+            'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des']
+
+
+def fmt_date(s):
+    """Format '2026-08-26' -> '26 Agu 2026'. Kirim apa adanya bila tak dikenali."""
+    s = (s or '').strip()
+    if not s:
+        return ''
+    m = re.match(r'(\d{4})-(\d{1,2})-(\d{1,2})', str(s))
+    if not m:
+        return s
+    y, mo, d = m.groups()
+    try:
+        return '%d %s %s' % (int(d), BULAN_ID[int(mo)], y)
+    except (ValueError, IndexError):
+        return s
+
+
 def render_page(title, body, site, tagline, extra=''):
     # assets/script.js: tema, nav, hero, pencarian global dan pencarian bab
     # (Cari Bab untuk Dibaca). Wajib dimuat di SEMUA halaman.
@@ -102,14 +121,17 @@ def card_html(s):
             % (esc(c.get('slug', '')), esc(ch_label(c))) for c in chs)
         latest = ('<div class="mc-latest"><div class="mc-latest-h">'
                   'Bab Terbaru</div><ul>%s</ul></div>' % items)
+    upd = fmt_date(s.get('last_updated'))
+    upd_html = ('<div class="mc-update">Update: %s</div>' % esc(upd)) if upd else ''
     return ('<article class="manga-card"><a class="manga-link" '
             'href="/manga/%s/"><div class="thumb">'
             '<img class="cover" src="%s" alt="%s" loading="lazy" '
             'referrerpolicy="no-referrer" decoding="async"></div>'
             '<div class="mc-title">%s</div>'
-            '<div class="mc-meta">%s</div></a>%s</article>'
+            '<div class="mc-meta">%s</div>%s</a>%s</article>'
             % (esc(s.get('slug')), esc(s.get('cover_url') or '/assets/logo.png'),
-               esc(s.get('title')), esc(s.get('title')), esc(genres), latest))
+               esc(s.get('title')), esc(s.get('title')), esc(genres),
+               upd_html, latest))
 
 
 def sun_grid(series):
@@ -133,6 +155,8 @@ def series_page_html(s):
         badges.append('<span class="badge badge-dim">%s</span>'
                       % esc(s['alt_title']))
     meta = ''
+    if s.get('last_updated'):
+        meta += meta_line('Update', fmt_date(s['last_updated']))
     if s.get('author'):
         meta += meta_line('Pengarang', s['author'])
     if s.get('illustrator'):
