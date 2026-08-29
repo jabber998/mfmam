@@ -84,10 +84,10 @@
         var num = rowNumber(row);
         var hay = (num + ' ' + rowTitle(row)).toLowerCase();
         return tokens.every(function(t){
-          // angka: cocokkan bila nomor bab MENGANDUNG angka tsb (substring),
-          // mis. ketik "10" -> 10, 100-109, 110, 210, 310, 410, dst.
+          // angka: cocokkan NOMOR BAB secara persis (exact),
+          // mis. ketik "10" -> hanya chapter 10 (bukan 100-109, 110, dst).
           if (/^\d+(\.\d+)?$/.test(t)){
-            return num.indexOf(t) !== -1;
+            return num === t;
           }
           return hay.indexOf(t) !== -1;
         });
@@ -126,9 +126,9 @@
       function tokenHit(token, d){
         if (!token) return true;
         var ts = d.n != null ? String(d.n) : '';
-        // angka: cocokkan bila nomor bab MENGANDUNG angka tsb (substring),
-        // mis. ketik "10" -> 10, 100-109, 110, 210, 410, dst.
-        if (/^\d+(\.\d+)?$/.test(token)) return ts.indexOf(token) !== -1;
+        // angka: cocokkan NOMOR BAB secara persis (exact),
+        // mis. ketik "10" -> hanya chapter 10 (bukan 100-109, 110, dst).
+        if (/^\d+(\.\d+)?$/.test(token)) return ts === token;
         var hay = (d.s + ' ' + d.t).toLowerCase();
         return hay.indexOf(token) !== -1;
       }
