@@ -53,3 +53,26 @@ vercel deploy --prod
 Ganti domain sesuai keinginan -> SSL otomatis (Vercel).
 
 Lihat juga PANDUAN-MIGRASI.md di folder induk untuk langkah manual lengkap.
+
+## Auto-update: scrape 4x/hari, deploy ke Netlify 1x per 3 hari
+
+Untuk hemat kredit Netlify (15 kredit per production deploy), pipeline GitHub
+Actions memisahkan scraping dari deploy:
+
+- `.github/workflows/scrape.yml` — cron tiap 6 jam (4x/hari). Menjalankan
+  `scraper.py` (incremental) lalu me-commit hasil ke branch **staging** (bukan
+  `main`). Karena Netlify hanya build saat ada push ke `main`, scraping TIDAK
+  memicu deploy (0 kredit).
+- `.github/workflows/deploy.yml` — cron `35 6 */3 * *` (06:35 UTC setiap 3
+  hari; ~10 run/bulan). Menggabungkan `staging` → `main` lalu push. Push ke
+  `main` itulah satu-satunya pemicu build & deploy Netlify. Bila tidak ada
+  perubahan baru dari staging, run di-skip (tanpa push, tanpa deploy = 0 kredit).
+
+Efek terhadap kredit (plan credit-based):
+- Scrape 4x/hari: 0 kredit (murni GitHub Actions).
+- Deploy 1x per 3 hari: maksimum ~10 run/bulan. Hanya run yang menemukan bab
+  baru yang push & deploy; setiap deploy = 15 kredit. Selalu ada bab baru setiap
+  3 hari: 10 x 15 = 150 kredit/bulan — muat di Free (300). Paling sering malah
+  di bawah itu (0–150).
+- Untuk menekan lebih lanjut: jadwal mingguan — ubah cron `deploy.yml` menjadi
+  `35 6 * * 1` (Senin 06:35 UTC) → maksimal ~5 deploy/bulan = 75 kredit.

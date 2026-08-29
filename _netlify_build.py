@@ -34,10 +34,22 @@ def esc(s):
     return H.escape(str(s or ''), quote=True)
 
 
+def fmt_num(n):
+    """Nomor bab tanpa desimal bila bulat: 415.0 -> 415 (lebih rapi & mudah dicari)."""
+    try:
+        f = float(n)
+        return int(f) if f.is_integer() else f
+    except (TypeError, ValueError):
+        return n
+
+
 def render_page(title, body, site, tagline, extra=''):
+    # assets/script.js: tema, nav, hero, pencarian global dan pencarian bab
+    # (Cari Bab untuk Dibaca). Wajib dimuat di SEMUA halaman.
     # netlify-identity-widget: wajib di halaman root agar tautan undangan/
     # konfirmasi/reset Netlify Identity bisa ditangkap dan memunculkan form-nya.
-    widget = ('<script src="https://unpkg.com/netlify-identity-widget@1.9.2/build/'
+    widget = ('<script src="/assets/script.js"></script>'
+              '<script src="https://unpkg.com/netlify-identity-widget@1.9.2/build/'
               'netlify-identity-widget.js"></script>')
     return ('<!DOCTYPE html>\n<html lang="id"><head><meta charset="utf-8">'
             '<meta name="viewport" content="width=device-width, initial-scale=1">'
@@ -116,7 +128,7 @@ def series_page_html(s):
             if s.get('desc') else '')
     rows = ''.join('<a class="ch-row" href="/%s/"><span class="ch-no">%s</span>'
                    '<span class="ch-ti">%s</span></a>'
-                   % (esc(c.get('slug', '')), esc(c.get('num', '')),
+                   % (esc(c.get('slug', '')), esc(fmt_num(c.get('num'))),
                       esc(c.get('title', ''))) for c in ch)
     badges_join = ''.join(badges)
     search_ui = chapter_search_ui(s.get('title'))
@@ -191,7 +203,7 @@ def chapter_index(series):
                 t = 'Chapter %s' % num
             else:
                 t = 'Chapter'
-            out.append({'s': st, 't': t, 'n': num,
+            out.append({'s': st, 't': t, 'n': fmt_num(num),
                         'u': '/%s/' % (c.get('slug') or '')})
     return out
 

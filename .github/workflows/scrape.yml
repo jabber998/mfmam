@@ -3,7 +3,9 @@ name: Scraper Otomatis Mfmam
 on:
   schedule:
     # UTC; 03:35 & 09:35 & 15:35 & 21:35 UTC (tiap 6 jam).
-    - cron: "35 */6 * * *"
+    # Hasil di-commit ke branch STAGING; deploy ke Netlify dijalankan oleh
+    # deploy.yml (merge staging -> main, 1x per 3 hari) supaya hemat kredit.
+    - cron: "35 3,9,15,21 * * *"
   workflow_dispatch:
     inputs:
       urls:
@@ -16,14 +18,38 @@ on:
         type: number
         default: 20
 
+concurrency:
+  group: scrape-staging
+  cancel-in-progress: false
+
 jobs:
   scrape:
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
-      - name: Checkout
+      - name: Checkout (riwayat penuh untuk sinkronisasi staging)
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Siapkan branch staging dari main
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch --all --prune
+          if git rev-parse --verify origin/staging >/dev/null 2>&1; then
+            git checkout -B staging origin/staging
+            # Sinkronkan hasil edit admin/CMS yang di-commit langsung ke main.
+            git merge --no-edit origin/main || {
+              echo "Konflik main->staging; staging dipertahankan apa adanya."
+              git merge --abort || true
+            }
+          else
+            git checkout -B staging main
+            git push -u origin HEAD:staging || true
+          fi
+          git status -sb
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -40,7 +66,7 @@ jobs:
 
       - name: Jalankan scraper (info seri + bab + gambar, incremental)
         env:
-          BATCH_LIMIT: ${{ inputs.batch }}
+          BATCH_LIMIT: ${{ github.event_name == 'workflow_dispatch' && inputs.batch || '' }}
           SCRAPE_IMAGES: "1"
         run: |
           python scraper.py
@@ -50,7 +76,7 @@ jobs:
         run: |
           rm -f site-content/manual-batch.txt
 
-      - name: Commit & push hasil (tahan "fetch first" / race)
+      - name: Commit & push ke staging (tahan "fetch first" / race)
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -60,14 +86,14 @@ jobs:
             exit 0
           fi
           git commit -m "chore: update katalog dari scraper"
-          # Coba push; jika ditolak karena remote maju (race), tarik ulang lalu ulangi.
+          # Coba push ke staging; jika ditolak karena remote maju (race), tarik ulang lalu ulangi.
           for i in 1 2 3 4 5; do
-            if git push; then
-              echo "Push berhasil."
+            if git push origin HEAD:staging; then
+              echo "Push ke staging berhasil."
               exit 0
             fi
             echo "Push ditolak (percobaan $i), tarik ulang perubahan remote..."
-            git pull --rebase --autostash || true
+            git pull --rebase --autostash origin staging || true
           done
           echo "Push masih gagal setelah beberapa percobaan."
           exit 1
