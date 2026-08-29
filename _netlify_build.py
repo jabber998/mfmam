@@ -117,8 +117,10 @@ def card_html(s):
     latest = ''
     if chs:
         items = ''.join(
-            '<li><a href="/%s/">%s</a></li>'
-            % (esc(c.get('slug', '')), esc(ch_label(c))) for c in chs)
+            '<li><a href="/%s/">%s</a>%s</li>'
+            % (esc(c.get('slug', '')), esc(ch_label(c)),
+               ('<span class="ch-dt">%s</span>' % esc(fmt_date(c.get('date'))))
+               if c.get('date') else '') for c in chs)
         latest = ('<div class="mc-latest"><div class="mc-latest-h">'
                   'Bab Terbaru</div><ul>%s</ul></div>' % items)
     upd = fmt_date(s.get('last_updated'))
@@ -169,9 +171,11 @@ def series_page_html(s):
     desc = ('<div class="seri-desc">%s</div>' % esc(s.get('desc'))
             if s.get('desc') else '')
     rows = ''.join('<a class="ch-row" href="/%s/"><span class="ch-no">%s</span>'
-                   '<span class="ch-ti">%s</span></a>'
+                   '<span class="ch-ti">%s</span>%s</a>'
                    % (esc(c.get('slug', '')), esc(fmt_num(c.get('num'))),
-                      esc(c.get('title', ''))) for c in ch)
+                      esc(c.get('title', '')),
+                      ('<span class="ch-dt">%s</span>' % esc(fmt_date(c.get('date'))))
+                      if c.get('date') else '') for c in ch)
     badges_join = ''.join(badges)
     search_ui = chapter_search_ui(s.get('title'))
     return ('<div class="seri-page"><div class="seri-head">'
@@ -202,8 +206,10 @@ def chapter_list_box(chs, cur_slug):
     lis = []
     for c in chs:
         cls = ' class="cur"' if c.get('slug') == cur_slug else ''
-        lis.append('<li%s><a href="/%s/">%s</a></li>'
-                   % (cls, esc(c.get('slug', '')), esc(c.get('title', ''))))
+        dt = ('<span class="ch-dt">%s</span>' % esc(fmt_date(c.get('date')))) \
+            if c.get('date') else ''
+        lis.append('<li%s><a href="/%s/">%s</a>%s</li>'
+                   % (cls, esc(c.get('slug', '')), esc(c.get('title', '')), dt))
     return ('<details class="chap-list"><summary>Daftar Semua Bab (%d)</summary>'
             '<ul>%s</ul></details>' % (len(chs), ''.join(lis)))
 
@@ -372,11 +378,15 @@ def build():
             prev = chs[i - 1] if i > 0 else None
             nxt = chs[i + 1] if i + 1 < len(chs) else None
             title = c.get('title') or 'Chapter'
+            cdate = ('<div class="reader-date">Dipublikasikan: %s</div>'
+                     % esc(fmt_date(c.get('date')))) if c.get('date') else ''
             reader = ('<h1 class="reader-title">%s</h1>'
                       '<div class="reader-crumb"><a href="/manga/%s/">%s</a></div>'
+                      '%s'
                       '<div class="reader">%s%s'
                       '<div class="reader-content">%s</div>%s</div>'
                       % (esc(title), s['slug'], esc(s['title']),
+                         cdate,
                          chapter_nav(prev, nxt), chapter_list_box(chs, cs),
                          chapter_body(c, s), chapter_nav(prev, nxt)))
             write('%s/index.html' % cs, render_page(

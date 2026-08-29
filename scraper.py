@@ -19,12 +19,16 @@ Mode:
     (hotlink; halaman dibangun dengan referrerpolicy="no-referrer"), jadi TIDAK
     disimpan ke repo. Bab yang sudah punya `images` tidak di-fetch ulang
     (incremental), sehingga run rutin cepat.
+  * TANGGAL  (--dates atau env SCRAPE_DATES=1): ikut mengambil tanggal terbit
+    tiap bab (article:published_time) dari halaman bab sumber. Bab yang sudah
+    punya `date` tidak di-fetch ulang (incremental).
 
 Pastikan Anda berhak menautkan/menampilkan sumber yang dipilih.
 
 Jalankan:
   python scraper.py            # update (mode link)
   python scraper.py --images   # update + ambil gambar bab
+  python scraper.py --dates    # update + ambil tanggal tiap bab
   python scraper.py --test     # uji parser tanpa network
 """
 import os, re, json, sys, time, random, html as H
@@ -50,6 +54,10 @@ def polite_delay():
 # 0 = tanpa batas; selain itu = batas jumlah bab yang diambil gambarnya per run.
 _MAX_CAP = os.environ.get('MAX_IMAGE_CHAPTERS', '')
 MAX_IMAGE_CHAPTERS = int(_MAX_CAP) if _MAX_CAP.isdigit() else 0
+
+# 0 = tanpa batas; selain itu = batas jumlah bab yang diisi tanggalnya per run.
+_MAX_D = os.environ.get('MAX_CHAPTER_DATES', '')
+MAX_CHAPTER_DATES = int(_MAX_D) if _MAX_D.isdigit() else 0
 
 CH_RE = re.compile(r'\b(?:chapter|bab)\s*(\d+(?:\.\d+)?)', re.I)
 ANCHOR_RE = re.compile(r'<a\b[^>]*href=["\']([^"\']+)["\'][^>]*>(.*?)</a>',
@@ -91,6 +99,16 @@ UPD_META_RE = re.compile(
 UPD_TIME_RE = re.compile(
     r'<time\b[^>]*datetime="(\d{4}-\d{2}-\d{2})"', re.I)
 
+# Tanggal terbit per-bab, dikutip dari halaman bab sumber.
+CH_DATE_RE = re.compile(
+    r'<meta[^>]+(?:article:published_time|article:modified_time|'
+    r'og:updated_time)[^>]+content="(\d{4}-\d{2}-\d{2})', re.I)
+CH_DATE_LD_RE = re.compile(
+    r'"(?:datePublished|dateModified|uploadDate)"\s*:\s*'
+    r'"(\d{4}-\d{2}-\d{2})[T ]', re.I)
+CH_DATE_TIME_RE = re.compile(
+    r'<time\b[^>]*datetime="(\d{4}-\d{2}-\d{2})"', re.I)
+
 # Nama bulan (sumber memakai Bahasa Indonesia / Inggris) -> nomor bulan.
 MONTH_NUM = {
     'januari': 1, 'februari': 2, 'maret': 3, 'april': 4, 'mei': 5, 'juni': 6,
@@ -113,6 +131,13 @@ def extract_last_updated(html):
     if m:
         return m.group(1)
     return ''
+
+
+def extract_chapter_date(html):
+    """Kembalikan tanggal terbit bab `YYYY-MM-DD` dari HTML halaman bab sumber."""
+    m = CH_DATE_RE.search(html) or CH_DATE_LD_RE.search(html) \
+        or CH_DATE_TIME_RE.search(html)
+    return m.group(1) if m else ''
 
 # label di halaman sumber -> kunci JSON (dinormalisasi huruf kecil).
 INFO_KEYMAP = {
@@ -302,8 +327,11 @@ def fill_chapter_images(chapters):
         if not ext or c.get('images'):
             continue
         try:
-            imgs = parse_chapter_images(fetch(ext), ext)
+            html = fetch(ext)
+            imgs = parse_chapter_images(html, ext)
             c['images'] = imgs
+            if not c.get('date'):
+                c['date'] = extract_chapter_date(html)
             if imgs:
                 fetched += 1
         except Exception as ex:
@@ -315,10 +343,32 @@ def fill_chapter_images(chapters):
     return chapters
 
 
+def fill_chapter_dates(chapters):
+    """Isi `date` bab yang belum punya tanggal (incremental, tanpa gambar)."""
+    fetched = 0
+    for c in chapters:
+        if MAX_CHAPTER_DATES and fetched >= MAX_CHAPTER_DATES:
+            break
+        ext = c.get('external')
+        if not ext or c.get('date'):
+            continue
+        try:
+            d = extract_chapter_date(fetch(ext))
+            if d:
+                c['date'] = d
+                fetched += 1
+        except Exception as ex:
+            print('   ! tanggal bab `%s` gagal: %s' % (c.get('slug'), ex))
+        polite_delay()
+    n = sum(1 for c in chapters if c.get('date'))
+    print('-> tanggal bab terisi: %d/%d bab' % (n, len(chapters)))
+    return chapters
+
+
 # ---------------------------------------------------------------- scraping
 
 
-def scrape_series(entry, want_images):
+def scrape_series(entry, want_images, want_dates=False):
     url = entry.get('url')
     html = fetch(url)
     # bila URL ternyata halaman bab, ikuti tautan "Daftar Chapter" ke halaman seri
@@ -338,6 +388,8 @@ def scrape_series(entry, want_images):
     chapters = parse_chapter_links(html, url)
     if want_images:
         chapters = fill_chapter_images(chapters)
+    elif want_dates:
+        chapters = fill_chapter_dates(chapters)
     return {
         'slug': slugify(entry.get('slug') or title),
         'title': clean(title),
@@ -372,6 +424,8 @@ def write_series(slug, data):
             oc = old.get(ext)
             if oc and not c.get('images') and oc.get('images'):
                 c['images'] = oc['images']   # jaga gambar lama (incremental)
+            if oc and not c.get('date') and oc.get('date'):
+                c['date'] = oc['date']        # jaga tanggal bab lama
         merged_ch.append(c)
     # pertahankan bab yang sudah ada tapi tak muncul di scrape terbaru
     for c in prev.get('chapters') or []:
@@ -466,6 +520,10 @@ def run():
     want_images = ('--images' in sys.argv
                    or os.environ.get('SCRAPE_IMAGES', '').strip()
                    not in ('', '0'))
+    want_dates = (not want_images
+                  and ('--dates' in sys.argv
+                       or os.environ.get('SCRAPE_DATES', '').strip()
+                       not in ('', '0')))
     entries = []
     src_data = load_json_file(SRC)
     if src_data is not None:
@@ -517,10 +575,13 @@ def run():
         return 0
 
     total_ch = 0
+    mode = ('gambar' if want_images else
+            'tanggal' if want_dates else 'link')
     for i, e in enumerate(entries, 1):
         print('[%d/%d] %s' % (i, len(entries), e.get('url')))
         try:
-            m = scrape_series(e, want_images=want_images)
+            m = scrape_series(e, want_images=want_images,
+                             want_dates=want_dates)
         except Exception as ex:
             print('   ! gagal: %s' % ex)
             polite_delay()
@@ -528,12 +589,10 @@ def run():
         slug = slugify(m['slug'])
         n = write_series(slug, m)
         total_ch += n
-        print('   -> seri %s, %d bab (mode %s)'
-              % (slug, n, 'gambar' if want_images else 'link'))
+        print('   -> seri %s, %d bab (mode %s)' % (slug, n, mode))
         polite_delay()
     print('selesai (mode %s): %d seri diproses, %d bab ditulis ke '
-          'site-content/series/' % ('gambar' if want_images else 'link',
-                                    len(entries), total_ch))
+          'site-content/series/' % (mode, len(entries), total_ch))
     return 0
 
 
