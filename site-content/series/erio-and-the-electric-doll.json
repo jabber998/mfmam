@@ -1,0 +1,84 @@
+{
+  "slug": "erio-and-the-electric-doll",
+  "title": "Erio And The Electric Doll",
+  "desc": "Erio and the Electric Doll yang dibuat oleh komikus bernama Shimazaki Mujirushi ini bercerita tentang Kisah ini berpusat pada Ange, sebuah boneka listrik, dan Erio, seorang manusia yang dibesarkan olehnya. Agar Erio dapat merasakan dunia luar, keduanya memulai sebuah perjalanan.",
+  "keywords": "Post-Apocalyptic",
+  "status": "Berjalan",
+  "type": "",
+  "author": "Shimazaki Mujirushi",
+  "illustrator": "Kuroi Mori",
+  "alt_title": "エリオと電気人形, Erio & the Electric Doll, Erio and the Electric Doll, এরিও এবং আবেগহীন পুতুল",
+  "genres": [
+    "Adventure",
+    "Drama",
+    "Fantasy",
+    "Girls",
+    "Philosophical",
+    "Romance",
+    "Sci",
+    "Slice"
+  ],
+  "cover_url": "https://komikindo.ch/wp-content/uploads/2026/08/Komik-Erio-to-Denki-Ningyou.jpg",
+  "chapters": [
+    {
+      "title": "Chapter Awal Chapter 1",
+      "external": "https://komikindo.ch/erio-and-the-electric-doll-chapter-1/",
+      "num": 1.0,
+      "slug": "chapter-awal-chapter-1"
+    },
+    {
+      "title": "Chapter Baru Chapter 10",
+      "external": "https://komikindo.ch/erio-and-the-electric-doll-chapter-10/",
+      "num": 10.0,
+      "slug": "chapter-baru-chapter-10"
+    },
+    {
+      "title": "Chapter 9",
+      "external": "https://komikindo.ch/erio-and-the-electric-doll-chapter-9/",
+      "num": 9.0,
+      "slug": "chapter-9"
+    },
+    {
+      "title": "Chapter 8",
+      "external": "https://komikindo.ch/erio-and-the-electric-doll-chapter-8/",
+      "num": 8.0,
+      "slug": "chapter-8"
+    },
+    {
+      "title": "Chapter 7",
+      "external": "https://komikindo.ch/erio-and-the-electric-doll-chapter-7/",
+      "num": 7.0,
+      "slug": "chapter-7"
+    },
+    {
+      "title": "Chapter 6",
+      "external": "https://komikindo.ch/erio-and-the-electric-doll-chapter-6/",
+      "num": 6.0,
+      "slug": "chapter-6"
+    },
+    {
+      "title": "Chapter 5",
+      "external": "https://komikindo.ch/erio-and-the-electric-doll-chapter-5/",
+      "num": 5.0,
+      "slug": "chapter-5"
+    },
+    {
+      "title": "Chapter 4",
+      "external": "https://komikindo.ch/erio-and-the-electric-doll-chapter-4/",
+      "num": 4.0,
+      "slug": "chapter-4"
+    },
+    {
+      "title": "Chapter 3",
+      "external": "https://komikindo.ch/erio-and-the-electric-doll-chapter-3/",
+      "num": 3.0,
+      "slug": "chapter-3"
+    },
+    {
+      "title": "Chapter 2",
+      "external": "https://komikindo.ch/erio-and-the-electric-doll-chapter-2/",
+      "num": 2.0,
+      "slug": "chapter-2"
+    }
+  ]
+}

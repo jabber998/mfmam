@@ -83,15 +83,33 @@ def ch_sort_key(c):
     return (1, 0) if n is None else (0, -(n or 0))
 
 
+def ch_label(c):
+    """Label singkat satu bab: 'Chapter 415' bila ada nomor, selain itu judul."""
+    n = c.get('num')
+    if n is not None:
+        return 'Chapter %s' % fmt_num(n)
+    t = (c.get('title') or '').strip()
+    return t[:40] or 'Chapter'
+
+
 def card_html(s):
     genres = ' / '.join(s.get('genres') or [])
-    return ('<a class="manga-card" href="/manga/%s/"><div class="thumb">'
+    chs = sorted(s.get('chapters') or [], key=ch_sort_key)[:3]
+    latest = ''
+    if chs:
+        items = ''.join(
+            '<li><a href="/%s/">%s</a></li>'
+            % (esc(c.get('slug', '')), esc(ch_label(c))) for c in chs)
+        latest = ('<div class="mc-latest"><div class="mc-latest-h">'
+                  'Bab Terbaru</div><ul>%s</ul></div>' % items)
+    return ('<article class="manga-card"><a class="manga-link" '
+            'href="/manga/%s/"><div class="thumb">'
             '<img class="cover" src="%s" alt="%s" loading="lazy" '
             'referrerpolicy="no-referrer" decoding="async"></div>'
             '<div class="mc-title">%s</div>'
-            '<div class="mc-meta">%s</div></a>'
+            '<div class="mc-meta">%s</div></a>%s</article>'
             % (esc(s.get('slug')), esc(s.get('cover_url') or '/assets/logo.png'),
-               esc(s.get('title')), esc(s.get('title')), esc(genres)))
+               esc(s.get('title')), esc(s.get('title')), esc(genres), latest))
 
 
 def sun_grid(series):

@@ -1,0 +1,31 @@
+{
+  "slug": "class-no-tenshi-ni-kokutta-kekka",
+  "title": "Class No Tenshi Ni Kokutta Kekka",
+  "desc": "Class no Tenshi ni Kokutta Kekka yang dibuat oleh komikus bernama Orihara Shikaku ini bercerita tentang Selalu lembut dan ramah, dengan senyum seperti malaikat. Akhirnya aku menyatakan perasaanku kepada teman sekelasku, Mikomori-san! Kupikir ini akan menjadi awal kebersamaan kita... sampai aku mendengar responsnya yang mengejutkan!? Pengakuan bukanlah tujuan, tetapi permulaan!",
+  "keywords": "School Life",
+  "status": "Berjalan",
+  "type": "",
+  "author": "Orihara Shikaku",
+  "illustrator": "Orihara Shikaku",
+  "alt_title": "クラスの天使に告った結果, The Result of Confessing to the Class Angel",
+  "genres": [
+    "Comedy",
+    "Romance",
+    "Slice"
+  ],
+  "cover_url": "https://komikindo.ch/wp-content/uploads/2026/08/Komik-Class-no-Tenshi-ni-Kokutta-Kekka.jpg",
+  "chapters": [
+    {
+      "title": "Chapter Awal Chapter 1",
+      "external": "https://komikindo.ch/class-no-tenshi-ni-kokutta-kekka-chapter-1/",
+      "num": 1.0,
+      "slug": "chapter-awal-chapter-1"
+    },
+    {
+      "title": "Chapter Baru Chapter 2",
+      "external": "https://komikindo.ch/class-no-tenshi-ni-kokutta-kekka-chapter-2/",
+      "num": 2.0,
+      "slug": "chapter-baru-chapter-2"
+    }
+  ]
+}

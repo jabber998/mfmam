@@ -1,0 +1,45 @@
+{
+  "slug": "one-piece",
+  "title": "One Piece",
+  "desc": "Manga One Piece: Ace Story yang dibuat oleh komikus bernama Boichi, Eiichiro Oda ini bercerita tentang Spin-Off dari serial One Piece yang menceritakan awal karir Portgas D. Ace menjadi bajak laut, dari pertama kali dia memakan buah iblis Mera Mera, membentuk bajak lautnya sendiri, yaitu Bajak Laut Spade, hingga dia berhasil sampai di Dunia Baru dan bertemu dengan Shirohige.",
+  "keywords": "",
+  "status": "Tamat",
+  "type": "Manga",
+  "author": "Boichi, Eiichiro Oda",
+  "illustrator": "Boichi",
+  "alt_title": "Ace Story",
+  "genres": [
+    "Action",
+    "Adventure",
+    "Comedy",
+    "Drama",
+    "Fantasy"
+  ],
+  "cover_url": "https://kena-blok.xyz/kontlo/2021/02/Manga-One-Piece-Ace-Story.jpg",
+  "chapters": [
+    {
+      "title": "Chapter Awal Chapter 1",
+      "external": "https://komikindo.ch/one-piece-ace-story-chapter-1/",
+      "num": 1.0,
+      "slug": "chapter-awal-chapter-1"
+    },
+    {
+      "title": "Chapter Baru Chapter 4 End",
+      "external": "https://komikindo.ch/one-piece-ace-story-chapter-4-end/",
+      "num": 4.0,
+      "slug": "chapter-baru-chapter-4-end"
+    },
+    {
+      "title": "Chapter 3",
+      "external": "https://komikindo.ch/one-piece-ace-story-chapter-3/",
+      "num": 3.0,
+      "slug": "chapter-3"
+    },
+    {
+      "title": "Chapter 2",
+      "external": "https://komikindo.ch/one-piece-ace-story-chapter-2/",
+      "num": 2.0,
+      "slug": "chapter-2"
+    }
+  ]
+}
