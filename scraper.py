@@ -27,7 +27,7 @@ Jalankan:
   python scraper.py --images   # update + ambil gambar bab
   python scraper.py --test     # uji parser tanpa network
 """
-import os, re, json, sys, time, html as H
+import os, re, json, sys, time, random, html as H
 from urllib.request import Request, urlopen
 from urllib.parse import urljoin
 
@@ -36,7 +36,16 @@ SRC = os.path.join(ROOT, 'site-content', 'sources.json')
 SERIES_DIR = os.path.join(ROOT, 'site-content', 'series')
 UA = ('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
       'Chrome/124.0 Safari/537.36')
-DELAY = 0.5
+# Jeda antar request (detik). Diperbesar + jitter acak agar tidak kelihatan
+# seperti bot dan kecil kemungkinan diblokir situs sumber. Atur lewat env
+# SCRAPE_DELAY bila ingin nilai lain, mis. `$env:SCRAPE_DELAY="3"`.
+_delay_env = os.environ.get('SCRAPE_DELAY', '').strip()
+DELAY = float(_delay_env) if _delay_env else 2.0
+
+
+def polite_delay():
+    """Sleep 50%-150% dari DELAY (jitter) supaya ritme request tidak tetap."""
+    time.sleep(DELAY * random.uniform(0.5, 1.5))
 
 # 0 = tanpa batas; selain itu = batas jumlah bab yang diambil gambarnya per run.
 _MAX_CAP = os.environ.get('MAX_IMAGE_CHAPTERS', '')
@@ -265,7 +274,7 @@ def fill_chapter_images(chapters):
         except Exception as ex:
             print('   ! gambar bab `%s` gagal: %s' % (c.get('slug'), ex))
             c['images'] = []
-        time.sleep(DELAY)
+        polite_delay()
     n = sum(1 for c in chapters if c.get('images'))
     print('-> gambar terambil: %d/%d bab' % (n, len(chapters)))
     return chapters
@@ -477,14 +486,14 @@ def run():
             m = scrape_series(e, want_images=want_images)
         except Exception as ex:
             print('   ! gagal: %s' % ex)
-            time.sleep(DELAY)
+            polite_delay()
             continue
         slug = slugify(m['slug'])
         n = write_series(slug, m)
         total_ch += n
         print('   -> seri %s, %d bab (mode %s)'
               % (slug, n, 'gambar' if want_images else 'link'))
-        time.sleep(DELAY)
+        polite_delay()
     print('selesai (mode %s): %d seri diproses, %d bab ditulis ke '
           'site-content/series/' % ('gambar' if want_images else 'link',
                                     len(entries), total_ch))
