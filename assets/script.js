@@ -173,4 +173,31 @@
       cix.addEventListener('input', function(){ renderChap(cix.value); });
     }
   }
+
+  // Tanggal rilis relatif: bab baru tampil "5 jam yang lalu";
+  // bab lama tampil tanggal absolut (mis. "26 Agu 2026").
+  function agoText(dateStr){
+    var m = /^(\d{4})-(\d{1,2})-(\d{1,2})/.exec(dateStr || '');
+    if (!m) return null;
+    var d = new Date(+m[1], +m[2] - 1, +m[3]);
+    var diff = Date.now() - d.getTime();
+    if (diff < 0) diff = 0;
+    var HOUR = 3600000, DAY = 86400000;
+    if (diff < HOUR) return 'kurang dari 1 jam yang lalu';
+    if (diff < 24 * HOUR) return Math.floor(diff / HOUR) + ' jam yang lalu';
+    if (diff < 7 * DAY) return Math.floor(diff / DAY) + ' hari yang lalu';
+    if (diff < 30 * DAY) return Math.floor(diff / (7 * DAY)) + ' minggu yang lalu';
+    return null; // terlalu lama -> gunakan tanggal absolut (data-fmt)
+  }
+  function applyDates(){
+    var els = document.querySelectorAll('.ch-dt[data-date]');
+    for (var i = 0; i < els.length; i++){
+      var el = els[i], ds = el.getAttribute('data-date');
+      if (!el.getAttribute('data-fmt')) el.setAttribute('data-fmt', el.textContent);
+      var t = agoText(ds);
+      el.textContent = t || el.getAttribute('data-fmt');
+    }
+  }
+  applyDates();
+  setInterval(applyDates, 60000);
 })();
