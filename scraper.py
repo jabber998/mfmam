@@ -556,11 +556,30 @@ def scrape_series(entry, want_images, want_dates=False):
     }
 
 
+def make_series_id(length=6):
+    """Id pendek acak per seri (a-z0-9). Dipakai sebagai prefix slug bab."""
+    return ''.join(random.choices('abcdefghijklmnopqrstuvwxyz0123456789',
+                                  k=length))
+
+
+def prefix_slug(series_id, slug):
+    """Prefix slug bab dengan id seri: 'ab12cd-chapter-414'.
+    Dengan begitu bab dari seri berbeda TIDAK saling menimpa folder/URL
+    (mis. 'Chapter 10' milik Eleceed vs One Piece tetap terpisah)."""
+    slug = (slug or 'chapter').strip('-')
+    p = (series_id or '') + '-'
+    if p == '-':
+        return slug
+    return slug if slug.startswith(p) else p + slug
+
+
 def write_series(slug, data):
     """Tulis site-content/series/<slug>.json; pertahankan data lama (desc,
     gambar bab yang sudah direkam) agar tidak terhapus saat di-rewrite."""
     path = os.path.join(SERIES_DIR, slug + '.json')
     prev = load_json_file(path) or {}
+    # Id acak per seri: dibuat sekali, dipakai ulang di run berikutnya.
+    series_id = (prev.get('id') or '').strip() or make_series_id()
     old = {c.get('external'): c for c in (prev.get('chapters') or [])
            if c.get('external')}
     merged_ch, seen = [], set()
@@ -582,7 +601,11 @@ def write_series(slug, data):
         if ext and ext not in seen:
             seen.add(ext)
             merged_ch.append(c)
+    # slump bab dibedakan per seri: prefix dengan id seri biar tidak campur aduk.
+    for c in merged_ch:
+        c['slug'] = prefix_slug(series_id, c.get('slug', ''))
     merged = {
+        'id': series_id,
         'slug': slug,
         'title': data.get('title') or prev.get('title') or slug,
         'desc': data.get('desc') or prev.get('desc') or '',
