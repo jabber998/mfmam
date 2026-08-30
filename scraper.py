@@ -175,6 +175,22 @@ def clean(t):
     return re.sub(r'\s+', ' ', H.unescape(TAG_RE.sub('', t or ''))).strip()
 
 
+def clean_title(t):
+    """Judul bersih khas situs sumber:
+    'Komik One Piece: Ace Story - KomikIndo' -> 'One Piece Ace Story'.
+    - titik dua diganti spasi (bagian setelah ':' TIDAK dibuang),
+    - awalan branding 'Komik/Manga/Manhwa/Baca Komik' dibuang,
+    - akhiran ' - KomikIndo' dibuang."""
+    t = clean(t)
+    t = re.sub(r'\s*:\s*', ' ', t)
+    t = re.sub(r'\s+', ' ', t).strip()
+    t = re.sub(r'\s*-\s*(?:KomikIndo|Komikindo|Baca\s+Komik|Komik\s+Indonesia)[\w .]*$',
+               '', t, flags=re.I).strip()
+    t = re.sub(r'^(?:Baca\s+)?(?:Komik|Manga|Manhwa|Komik\s+Indo)\s+',
+               '', t, flags=re.I).strip()
+    return t
+
+
 def slugify(s):
     s = re.sub(r'[^a-z0-9]+', '-', (s or '').strip().lower())
     return re.sub(r'-+', '-', s).strip('-')
@@ -234,7 +250,7 @@ def load_json_file(path):
 def parse_chapter_links(html, base_url):
     rows, seen = [], set()
     for m in ANCHOR_RE.finditer(html):
-        href, label = m.group(1), clean(m.group(2))
+        href, label = m.group(1), clean_title(m.group(2))
         if not label:
             continue
         if 'chapter' not in (label + ' ' + href).lower():
@@ -334,34 +350,85 @@ def find_series_url(html, base_url):
 # ---------------------------------------------------------------- gambar
 
 
-def parse_chapter_images(html, base_url):
-    """Kembalikan daftar URL gambar dari halaman bab (di dalam `<div id="chimg-">`
-    atau container ber-class `chapter-image`)."""
-    m = CHIMG_RE.search(html) or CHIMG_CLASS_RE.search(html)
-    if not m:
-        return []
+IMG_ATTR_ORDER = ('data-src', 'data-lazy-src', 'data-original', 'data-url',
+                  'data-echo', 'data-srcset', 'src')
+
+
+def _img_src_from_tag(tag):
+    """Ambil URL dari satu tag <img>; dukung lazy-load (data-src/dst) & srcset."""
+    for attr in IMG_ATTR_ORDER:
+        m = re.search(attr + r'\s*=\s*["\']([^"\']+)["\']', tag, re.I)
+        if not m:
+            continue
+        val = m.group(1).strip()
+        if not val or val.startswith('data:') or val.startswith('java'):
+            continue
+        if 'srcset' in attr:
+            cands = [c.strip().split(' ')[0] for c in val.split(',') if c.strip()]
+            if not cands:
+                continue
+            val = cands[-1]   # kandidat terbesar (paling akhir)
+        return val
+    return None
+
+
+def _is_asset_url(u):
+    """Benar bila URL kemungkinan logo/iklan/aset tema, bukan gambar bab."""
+    low = u.lower()
+    if any(k in low for k in (
+            '/wp-content/themes/', '/wp-content/plugins/', '/wp-includes/',
+            '/favicon', '/sponsor', '/banner/', '/icons/', '/emoji/',
+            '/smiley', 'googleusercontent.com/gadgets', 'data:image',
+            'logo', 'avatar', 'icon-', 'favicon', 'sponsor', 'ads.')):
+        return True
+    return False
+
+
+def _collect_img_urls(texts, base_url):
+    """Kumpulkan URL gambar dari satu/beberapa fragmen HTML (dedupe)."""
     out, seen = [], set()
-    for tag in IMG_TAG_RE.finditer(m.group(1)):
-        sm = SRC_ATTR_RE.search(tag.group(0))
-        if not sm:
-            continue
-        u = H.unescape(sm.group(1)).split(' ')[0]
-        if u.startswith('//'):
-            u = 'https:' + u
-        elif u.startswith('/'):
-            u = urljoin(base_url, u)
-        if not u.startswith('http'):
-            continue
-        low = u.lower().split('?')[0]
-        if not re.search(r'\.(jpe?g|png|webp|gif)$', low):
-            continue
-        if '/wp-content/' in low:
-            continue  # logo/asset, bukan halaman bab
-        if u in seen:
-            continue
-        seen.add(u)
-        out.append(u)
+    for frag in texts:
+        for tag in IMG_TAG_RE.finditer(frag):
+            u = _img_src_from_tag(tag.group(0))
+            if not u:
+                continue
+            u = H.unescape(u).split(' ')[0]
+            if u.startswith('//'):
+                u = 'https:' + u
+            elif u.startswith('/'):
+                u = urljoin(base_url, u)
+            if not u.startswith('http'):
+                continue
+            low = u.lower().split('?')[0].split('#')[0]
+            if not re.search(r'\.(jpe?g|png|webp|gif|avif)$', low):
+                continue
+            if 'wp-content/uploads' not in low and '/wp-content/' in low:
+                continue  # aset tema di luar uploads (logo/plugin)
+            if _is_asset_url(u):
+                continue
+            if u in seen:
+                continue
+            seen.add(u)
+            out.append(u)
     return out
+
+
+def parse_chapter_images(html, base_url):
+    """Kumpulkan URL gambar halaman bab.
+
+    Prioritas:
+      1) container resmi (<div id="chimg-.."> / .chapter-image);
+      2) kalau kosong/tak ada, scan SEMUA <img> di halaman (mendukung
+         lazy-load data-src/srcset) agar gambar tetap didapat walau struktur
+         halaman beda — gambar tidak di-skip begitu saja.
+    """
+    m = CHIMG_RE.search(html) or CHIMG_CLASS_RE.search(html)
+    if m:
+        out = _collect_img_urls([m.group(1)], base_url)
+        if out:
+            return out
+        # container ada tapi kosong -> tetap coba scan seluruh halaman
+    return _collect_img_urls([html], base_url)
 
 
 def fill_chapter_images(chapters):
@@ -380,12 +447,19 @@ def fill_chapter_images(chapters):
         try:
             html = fetch(c['external'])
             imgs = parse_chapter_images(html, c['external'])
-            c['images'] = imgs
-            if not c.get('date'):
-                c['date'] = extract_chapter_date(html)
             if imgs:
+                c['images'] = imgs
+                if not c.get('date'):
+                    c['date'] = extract_chapter_date(html)
                 fetched += 1
-            consec = 0
+                consec = 0
+            else:
+                # Halaman termuat tapi gambar tak ketemu -> JANGAN di-skip:
+                # coba lagi di akhir run ini; run berikutnya tetap mencoba lagi.
+                if tries[id(c)] < 2:
+                    pending.append(c)
+                else:
+                    c['images'] = []
         except Exception as ex:
             consec += 1
             print('   ! gambar bab `%s` gagal: %s' % (c.get('slug'), ex))
@@ -446,8 +520,15 @@ def scrape_series(entry, want_images, want_dates=False):
         url = su
     mt = OG_IMG_RE.search(html)
     mt_t = OG_T_RE.search(html) or TITLE_RE.search(html)
-    title = entry.get('title') or (clean(mt_t.group(1)) if mt_t
-                                   else entry.get('slug'))
+    page_title = clean_title(mt_t.group(1)) if mt_t else ''
+    # Judul tebakan dari URL (mis. "one-piece" -> "One Piece") jangan dipakai
+    # bila halaman sumber memberi judul lebih lengkap ("One Piece: Ace Story" ->
+    # "One Piece Ace Story"). Judul eksplisit dari sources.json tetap menang.
+    if entry.get('title') and not entry.get('auto_title'):
+        title = clean_title(entry.get('title') or '')
+    else:
+        title = (page_title or clean_title(entry.get('title')
+                                           or entry.get('slug') or ''))
     info = extract_series_info(html)
     genres = extract_genres(html)
     for g in (info.get('genres') or []):
@@ -560,8 +641,9 @@ def parse_list_links(html, base_url):
             slug = sx.group(2)          # 846048-eleceed -> eleceed
         if not slug or slug in ('page',):
             continue
-        title = ' '.join(w.capitalize() for w in slug.split('-'))
-        out.append({'url': href, 'slug': slug, 'title': title})
+        title = clean_title(' '.join(w.capitalize() for w in slug.split('-')))
+        out.append({'url': href, 'slug': slug, 'title': title,
+                    'auto_title': True})
     return out
 
 
@@ -614,9 +696,10 @@ def run():
                 mm = re.match(r'^(\d+)-([a-z0-9]+(?:-[a-z0-9]+)*)$', hint)
                 if mm:
                     hint = mm.group(2)      # mis. 846048-eleceed -> eleceed
-                title = ' '.join(x.capitalize() for x in hint.split('-'))
+                title = clean_title(' '.join(x.capitalize() for x in hint.split('-')))
                 entries.append({'url': url, 'slug': hint, 'title': title,
-                                'listing': is_listing_url(url)})
+                                'listing': is_listing_url(url),
+                                'auto_title': True})
     if not entries:
         print('Tidak ada sumber (sources.json kosong & tanpa URL manual).')
         print('Isi sources.json, atau tempel URL halaman seri / halaman daftar '
