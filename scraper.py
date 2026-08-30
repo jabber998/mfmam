@@ -34,6 +34,13 @@ Jalankan:
 import os, re, json, sys, time, random, html as H
 from urllib.request import Request, urlopen
 from urllib.parse import urljoin
+from urllib.error import HTTPError, URLError
+
+# Tampilkan progres langsung (tanpa buffer) saat log di-redirect ke file.
+try:
+    sys.stdout.reconfigure(line_buffering=True)
+except Exception:
+    pass
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 SRC = os.path.join(ROOT, 'site-content', 'sources.json')
@@ -44,12 +51,19 @@ UA = ('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
 # seperti bot dan kecil kemungkinan diblokir situs sumber. Atur lewat env
 # SCRAPE_DELAY bila ingin nilai lain, mis. `$env:SCRAPE_DELAY="3"`.
 _delay_env = os.environ.get('SCRAPE_DELAY', '').strip()
-DELAY = float(_delay_env) if _delay_env else 2.0
+DELAY = float(_delay_env) if _delay_env else 3.0
 
 
 def polite_delay():
     """Sleep 50%-150% dari DELAY (jitter) supaya ritme request tidak tetap."""
     time.sleep(DELAY * random.uniform(0.5, 1.5))
+
+# Jeda antar percobaan ulang sebuah request yang gagal (timeout/DNS/HTTP).
+RETRY_DELAYS = (5, 15, 35)
+# Setelah N kegagalan beruntun, jeda panjang agar sumber tidak makin ketat /
+# DNS pulih dulu. (circuit breaker)
+CIRCUIT_BREAK_AFTER = 4
+CIRCUIT_BREAK_PAUSE = (20.0, 45.0)
 
 # 0 = tanpa batas; selain itu = batas jumlah bab yang diambil gambarnya per run.
 _MAX_CAP = os.environ.get('MAX_IMAGE_CHAPTERS', '')
@@ -166,10 +180,43 @@ def slugify(s):
     return re.sub(r'-+', '-', s).strip('-')
 
 
-def fetch(url):
-    req = Request(url, headers={'User-Agent': UA, 'Accept': 'text/html'})
-    with urlopen(req, timeout=25) as r:
-        return r.read().decode('utf-8', 'ignore')
+def fetch(url, timeout=30):
+    """Ambil HTML halaman dengan retry + backoff untuk gangguan sementara
+    (timeout, DNS gagal, handshake timeout, HTTP 429/503/403)."""
+    last = None
+    # percobaan ke-0 langsung, lalu retry sesuai RETRY_DELAYS
+    for attempt in range(len(RETRY_DELAYS) + 1):
+        try:
+            req = Request(url, headers={'User-Agent': UA, 'Accept': 'text/html',
+                                        'Accept-Language': 'id,en;q=0.8'})
+            with urlopen(req, timeout=timeout) as r:
+                return r.read().decode('utf-8', 'ignore')
+        except HTTPError as ex:
+            last = ex
+            if ex.code in (403, 429, 503):
+                print('   ! HTTP %s (kemungkinan rate-limit) %s' % (ex.code, url))
+            else:
+                print('   ! HTTP %s %s' % (ex.code, url))
+        except Exception as ex:
+            last = ex
+            print('   ! request %s gagal: %s' % (url, ex))
+        if attempt < len(RETRY_DELAYS):
+            w = RETRY_DELAYS[attempt]
+            print('     coba ulang dalam %ds (percobaan %d/%d)...'
+                  % (w, attempt + 1, len(RETRY_DELAYS)))
+            time.sleep(w)
+    raise last if last else Exception('fetch gagal: %s' % url)
+
+
+def pause_on_failures(consecutive):
+    """Kalau sudah banyak kegagalan beruntun, istirahat panjang (circuit breaker)."""
+    if consecutive >= CIRCUIT_BREAK_AFTER:
+        pause = random.uniform(*CIRCUIT_BREAK_PAUSE)
+        print('   ! %d kegagalan beruntun; istirahat %ds agar sumber pulih...'
+              % (consecutive, round(pause)))
+        time.sleep(pause)
+        return 0
+    return consecutive
 
 
 def load_json_file(path):
@@ -318,25 +365,35 @@ def parse_chapter_images(html, base_url):
 
 
 def fill_chapter_images(chapters):
-    """Ambil gambar bab yang belum punya `images` (incremental)."""
+    """Ambil gambar bab yang belum punya `images` (incremental + retry)."""
     fetched = 0
-    for c in chapters:
+    consec = 0
+    pending = [c for c in chapters if c.get('external') and not c.get('images')]
+    tries = {id(c): 0 for c in pending}
+    while pending:
+        c = pending.pop(0)
         if MAX_IMAGE_CHAPTERS and fetched >= MAX_IMAGE_CHAPTERS:
             break
-        ext = c.get('external')
-        if not ext or c.get('images'):
-            continue
+        tries[id(c)] += 1
+        if tries[id(c)] > 2:
+            continue   # sudah 2x gagal, serahkan ke run berikutnya
         try:
-            html = fetch(ext)
-            imgs = parse_chapter_images(html, ext)
+            html = fetch(c['external'])
+            imgs = parse_chapter_images(html, c['external'])
             c['images'] = imgs
             if not c.get('date'):
                 c['date'] = extract_chapter_date(html)
             if imgs:
                 fetched += 1
+            consec = 0
         except Exception as ex:
+            consec += 1
             print('   ! gambar bab `%s` gagal: %s' % (c.get('slug'), ex))
-            c['images'] = []
+            consec = pause_on_failures(consec)
+            if not c.get('images') and tries[id(c)] < 2:
+                pending.append(c)   # coba sekali lagi di akhir sambil lalu
+        if MAX_IMAGE_CHAPTERS and fetched >= MAX_IMAGE_CHAPTERS:
+            break
         polite_delay()
     n = sum(1 for c in chapters if c.get('images'))
     print('-> gambar terambil: %d/%d bab' % (n, len(chapters)))
@@ -344,21 +401,32 @@ def fill_chapter_images(chapters):
 
 
 def fill_chapter_dates(chapters):
-    """Isi `date` bab yang belum punya tanggal (incremental, tanpa gambar)."""
+    """Isi `date` bab yang belum punya tanggal (incremental + retry)."""
     fetched = 0
-    for c in chapters:
+    consec = 0
+    pending = [c for c in chapters if c.get('external') and not c.get('date')]
+    tries = {id(c): 0 for c in pending}
+    while pending:
+        c = pending.pop(0)
         if MAX_CHAPTER_DATES and fetched >= MAX_CHAPTER_DATES:
             break
-        ext = c.get('external')
-        if not ext or c.get('date'):
-            continue
+        tries[id(c)] += 1
+        if tries[id(c)] > 2:
+            continue   # sudah 2x gagal, serahkan ke run berikutnya
         try:
-            d = extract_chapter_date(fetch(ext))
+            d = extract_chapter_date(fetch(c['external']))
             if d:
                 c['date'] = d
                 fetched += 1
+            consec = 0
         except Exception as ex:
+            consec += 1
             print('   ! tanggal bab `%s` gagal: %s' % (c.get('slug'), ex))
+            consec = pause_on_failures(consec)
+            if not c.get('date') and tries[id(c)] < 2:
+                pending.append(c)   # coba sekali lagi di akhir
+        if MAX_CHAPTER_DATES and fetched >= MAX_CHAPTER_DATES:
+            break
         polite_delay()
     n = sum(1 for c in chapters if c.get('date'))
     print('-> tanggal bab terisi: %d/%d bab' % (n, len(chapters)))
