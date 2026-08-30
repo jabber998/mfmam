@@ -1,3 +1,16 @@
 .pyc/
 __pycache__/
 *.pyc
+
+# hasil build (dibangkitkan _netlify_build.py dari site-content/)
+chapter-*/
+[a-z0-9]*-chapter-*/
+manga/
+genre/
+daftar-komik/
+kontak/
+raw/
+chapters-index.json
+search.json
+sitemap.xml
+404.html
