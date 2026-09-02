@@ -39,11 +39,13 @@ jobs:
         run: |
           python _restore_data.py || true
 
-      - name: Update seri existing saja (tanpa scan halaman / seri baru)
+      - name: Update seri terbaru (scan daftar, hanya yang update)
         env:
-          SCRAPE_UPDATE_ONLY: "1"
+          SCRAPE_SMART_UPDATE: "1"
           SCRAPE_AUTO_BUILD: "0"
-          # Update-only: proses SEMUA seri tersimpan (jangan dibatasi batch).
+          # Ambil 1-2 halaman daftar terbaru saja (tidak semua seri).
+          SCRAPE_MAX_PAGES: "2"
+          # Tidak perlu batas batch — daftar terbaru biasanya < 50 seri.
           BATCH_LIMIT: ""
         run: |
           python scraper.py

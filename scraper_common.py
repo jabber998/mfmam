@@ -1421,6 +1421,12 @@ def run(adapter, auto_build=None):
     # tidak menambah seri baru, tidak import manual-batch.
     update_only = os.environ.get('SCRAPE_UPDATE_ONLY', '').strip().lower() \
         in ('1', 'true', 'yes', 'on')
+    # MODE SMART-UPDATE (SCRAPE_SMART_UPDATE=1, 'true', 'yes', 'on'):
+    # 1) scan halaman daftar "terbaru" dari sources.json (mis. komik-terbaru);
+    # 2) filter HANYA seri yang SUDAH ADA di katalog; 3) scrape cuma seri itu.
+
+    smart_update = os.environ.get('SCRAPE_SMART_UPDATE', '').strip().lower() \
+        in ('1', 'true', 'yes', 'on')
     # Seed dari sitemap (opsional): import daftar seri LENGKAP dari sitemap
     # (mis. https://komikindo.ch/sitemap.xml). Argumen `--seed-sitemap <url>`
     # ATAU env SCRAPE_SITEMAP_URL (beberapa URL dipisah koma). Entri sitemap
@@ -1449,6 +1455,24 @@ def run(adapter, auto_build=None):
         if not entries:
             print('   ! belum ada seri tersimpan milik %s; jalankan scrape '
                   'penuh dulu (tanpa SCRAPE_UPDATE_ONLY).' % adapter.name)
+            return 0
+    elif smart_update:
+        # MODE SMART-UPDATE: scan halaman daftar "terbaru" (mis. komik-terbaru)
+        # dari sources.json, lalu HANYA memproses seri yang SUDAH ADA di katalog.
+
+        seed_sitemap = ''
+        entries = []
+        src_data = load_json_file(SRC) or []
+        for e in src_data:
+            u = (e.get('url') or '').strip()
+            if not u or not adapter.match_url(u):
+                continue
+            entries.append(e)
+        print('[scraper] MODE SMART-UPDATE: scan halaman daftar terbaru, '
+              'lalu update seri yang sudah ada di katalog (tanpa seri baru.)')
+        if not entries:
+            print('   ! tidak ada sumber daftar terbaru milik %s di sources.json '
+                  '(dilewati).' % adapter.name)
             return 0
     else:
         seed_sitemap = os.environ.get('SCRAPE_SITEMAP_URL', '').strip()
@@ -1524,6 +1548,22 @@ def run(adapter, auto_build=None):
     if not expanded:
         print('Tidak ada manga untuk diproses setelah scan.')
         return 0
+    if smart_update:
+        # Filter: HANYA seri yang SUDAH ADA di katalog (URL source_url sama).
+        existing_urls = set()
+        for _p in list_series_files():
+            _d = load_json_file(_p) or {}
+            _u = (_d.get('source_url') or '').rstrip('/')
+            if _u:
+                existing_urls.add(_u)
+        before = len(expanded)
+        expanded = [s for s in expanded
+                    if (s.get('url') or '').rstrip('/') in existing_urls]
+        print('[scraper] smart-update: %d seri di daftar terbaru, %d sudah ada '
+              'di katalog → di-update.' % (before, len(expanded)))
+        if not expanded:
+            print('   ! tidak ada seri terbaru yang sudah ada di katalog; selesai.')
+            return 0
     print('[scraper] seri siap diproses: %d' % len(expanded))
 
     limit = None
@@ -1658,12 +1698,13 @@ def run(adapter, auto_build=None):
     # Prioritas URL lanjutan: 1) env SCRAPE_NEXT_URL, 2) resume otomatis dari
     # state (bila run sebelumnya sudah pernah mengisi halaman), 3) prompt.
     # Mode --seed-sitemap mematikan pagination (sitemap sudah berisi semua seri).
-    cont_url = ('' if seed_sitemap
-                else os.environ.get('SCRAPE_NEXT_URL', '').strip())
+    skip_paging = seed_sitemap or smart_update
+    cont_url = ('' if skip_paging
+                else os.environ.get('SCRAPE_NEXT_URL', '' .strip()))
     pages_done = set()
     n_pages = 0
     state = load_state() if SCRAPE_RESUME else {}
-    if not cont_url and SCRAPE_RESUME and not seed_sitemap:
+    if not cont_url and SCRAPE_RESUME and not skip_paging:
         for e in entries:
             u = e.get('url') or ''
             if not u or not adapter.is_listing_url(u):
@@ -1677,7 +1718,7 @@ def run(adapter, auto_build=None):
                 print('\n[resume] run sebelumnya sudah pernah mengisi halaman; '
                       'lanjut otomatis ke halaman tersimpan: %s' % np)
                 break
-    if not cont_url and interactive() and not seed_sitemap:
+    if not cont_url and interactive() and not skip_paging:
         try:
             if ask_yes_no(
                     '\nSelesai scrape dari URL sumber. Lanjutkan ke halaman '
@@ -1692,7 +1733,7 @@ def run(adapter, auto_build=None):
     # Halaman dasar (base) dari sources.json baru saja diproses di atas;
     # tandai & simpan posisinya di state resume (tanpa menyentuh next_page
     # yang sudah tersimpan dari run sebelumnya).
-    if SCRAPE_RESUME and not seed_sitemap:
+    if SCRAPE_RESUME and not skip_paging:
         for e in entries:
             u = e.get('url') or ''
             if u and adapter.is_listing_url(u):
