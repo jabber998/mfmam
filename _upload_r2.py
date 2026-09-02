@@ -1,19 +1,33 @@
 # -*- coding: utf-8 -*-
 """
-Upload dist-data/data/*.json ke bucket R2 mfmam-data (key: data/<slug>.json).
+Upload data katalog (dist-data/data/*.json) ke bucket R2 `mfmam-data`
+key: data/<slug>.json -- HANYA file yang BERUBAH.
 
-Pakai `wrangler r2 object put` (OAuth sudah login, tanpa perlu S3 Access Key),
-dengan beberapa proses paralel agar lebih cepat.
+State riwayat upload disimpan DI DALAM bucket R2 itu sendiri
+(key: .r2-state.json) sehingga bertahan antar-run (lokal maupun CI).
+Setiap file dibandingkan pakai MD5; bila isinya sama dengan yang sudah
+pernah terupload, file dilewati (hemat operasi R2 + waktu).
+
+Menemukan wrangler:
+  - Lokal: pakai OAuth (wrangler.cmd hasil login).
+  - CI/GitHub Actions: set env WRANGLER_CMD, contoh: "npx wrangler@4"
+    (token API lewat env CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID).
 
 Jalankan:
-  python _upload_r2.py            # upload semua file di dist-data/data/
+  python _upload_r2.py                # upload file yang berubah
+  python _upload_r2.py --force        # upload SEMUA (abaikan state)
   python _upload_r2.py --workers 8
-  python _upload_r2.py --resume   # lewati file yang sudah tercatat OK di log
+
+Setelah selesai mencetak baris:
+  CHANGED:<n>
+agar workflow bisa melewati deploy bila n = 0 (tidak ada perubahan).
 """
 import os
 import sys
+import json
 import glob
 import time
+import hashlib
 import subprocess
 from concurrent.futures import ThreadPoolExecutor
 
@@ -21,158 +35,160 @@ ROOT = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(ROOT, 'dist-data', 'data')
 BUCKET = 'mfmam-data'
 PREFIX = 'data/'
-LOG_PATH = os.path.join(ROOT, 'r2-upload.log')
-# State cache ukuran+mtime file yang sudah terupload (agar run berikutnya hanya
-# meng-upload file yang BERUBAH — hemat operasi R2 & waktu)) Tersimpan di
-# dist-data/.r2-state.json (tidak di-deploy; folder dist-data tidak di-push).
-STATE_PATH = os.path.join(ROOT, 'dist-data', '.r2-state.json')
+STATE_KEY = '.r2-state.json'
+STATE_TMP = os.path.join(ROOT, 'dist-data', '_r2-state-tmp.json')
+STATE_LOCAL = os.path.join(ROOT, 'dist-data', '_r2-state-local.json')
 
-# cari wrangler.cmd
-WRANGLER = None
-for cand in (
-    os.path.join(os.environ.get('APPDATA', ''), 'npm', 'wrangler.cmd'),
-    os.path.join(os.environ.get('APPDATA', ''), 'npm', 'wrangler'),
-    'wrangler',
-):
-    if cand and os.path.exists(cand):
-        WRANGLER = cand
-        break
-if not WRANGLER:
-    WRANGLER = 'wrangler'
+# Perintah wrangler. Bisa dioverride lewat env (CI memakai npx).
+WRANGLER = os.environ.get('WRANGLER_CMD', '') or None
 
 
-def done_from_log():
-    """Kumpulkan nama file yang sudah tercatat OK di log (mode resume)."""
-    done = set()
-    if os.path.exists(LOG_PATH):
-        try:
-            with open(LOG_PATH, encoding='utf-8', errors='replace') as fh:
-                for line in fh:
-                    if line.startswith('[OK'):
-                        parts = line.split(']', 1)
-                        if len(parts) > 1:
-                            name = parts[1].strip().split()[0]
-                            done.add(name)
-        except Exception:
-            pass
-    return done
+def _wrangler_cmd():
+    if WRANGLER:
+        return WRANGLER.split()
+    for cand in (
+        os.path.join(os.environ.get('APPDATA', ''), 'npm', 'wrangler.cmd'),
+        os.path.join(os.environ.get('APPDATA', ''), 'npm', 'wrangler'),
+        'wrangler',
+    ):
+        if cand and os.path.exists(cand):
+            return [cand]
+    return ['wrangler']
 
 
-def load_state():
-    """Baca cache state (slug -> [size, mtime_ns] yang sudah terupload."""
+def _run(cmd, timeout=240):
+    """Jalankan subprocess; kembalikan (returncode, stdout, stderr)."""
     try:
-        with open(STATE_PATH, encoding='utf-8') as fh:
+        r = subprocess.run(cmd, capture_output=True, text=True,
+                           encoding='utf-8', errors='replace', timeout=timeout)
+        return r.returncode, r.stdout or '', r.stderr or ''
+    except Exception as ex:
+        return -1, '', '%s: %s' % (type(ex).__name__, ex)
+
+
+def fetch_state():
+    """Ambil state riwayat dari R2 (key .r2-state.json). {} bila belum ada."""
+    if not os.path.isdir(os.path.join(ROOT, 'dist-data')):
+        return {}
+    rc, out, err = _run(_wrangler_cmd() + [
+        'r2', 'object', 'get', '%s/%s' % (BUCKET, STATE_KEY),
+        '--remote', '--file', STATE_TMP], timeout=120)
+    if rc != 0 or not os.path.exists(STATE_TMP):
+        return {}
+    try:
+        with open(STATE_TMP, encoding='utf-8') as fh:
             return json.load(fh)
     except Exception:
         return {}
 
 
-def save_state(st):
-    os.makedirs(os.path.dirname(STATE_PATH), exist_ok=True)
-    tmp = STATE_PATH + '.tmp'
+def push_state(st):
+    """Simpan state riwayat kembali ke R2."""
     try:
-        with open(tmp, 'w', encoding='utf-8') as fh:
+        with open(STATE_LOCAL, 'w', encoding='utf-8') as fh:
             json.dump(st, fh, ensure_ascii=False)
-        os.replace(tmp, STATE_PATH)
     except Exception as ex:
-        print('   ! gagal simpan state R2: %s' % ex, flush=True)
+        print('   ! gagal simpan state lokal: %s' % ex, flush=True)
+        return False
+    rc, out, err = _run(_wrangler_cmd() + [
+        'r2', 'object', 'put', '%s/%s' % (BUCKET, STATE_KEY),
+        '--file', STATE_LOCAL, '--remote',
+        '--content-type', 'application/json; charset=utf-8'], timeout=120)
+    if rc != 0:
+        print('   ! gagal upload state ke R2: %s' %
+              (err or out)[-180:].replace('\n', ' '), flush=True)
+        return False
+    return True
+
+
+def md5_of(path):
+    h = hashlib.md5()
+    with open(path, 'rb') as fh:
+        for chunk in iter(lambda: fh.read(1048576), b''):
+            h.update(chunk)
+    return h.hexdigest()
 
 
 def changed_files(files, st):
-    """Return daftar file yang belum pernah terupload / isinya berubah (size/mtime)."""
+    """File yang belum terupload / isinya berbeda (berdasar MD5)."""
     out = []
     for f in files:
         name = os.path.basename(f)
         try:
-            sz = os.path.getsize(f)
-            mt = os.path.getmtime(f)
+            h = md5_of(f)
         except OSError:
             continue
-        rec = st.get(name)
-        if rec == [sz, round(mt * 1e9)]:
-            continue  # sudah pernah diupload, tidak berubah
+        if st.get(name) == h:
+            continue
         out.append(f)
     return out
 
 
 def upload_one(path):
     name = os.path.basename(path)
-    key = PREFIX + name
-    cmd = [WRANGLER, 'r2', 'object', 'put',
-           '%s/%s' % (BUCKET, key),
-           '--file', path,
-           '--remote',
-           '--content-type', 'application/json; charset=utf-8']
+    cmd = _wrangler_cmd() + [
+        'r2', 'object', 'put', '%s/%s' % (BUCKET, PREFIX + name),
+        '--file', path, '--remote',
+        '--content-type', 'application/json; charset=utf-8']
     t0 = time.time()
     last_err = ''
     ok = False
     for attempt in range(1, 4):  # retry 3x
-        try:
-            r = subprocess.run(cmd, capture_output=True, text=True,
-                               encoding='utf-8', errors='replace',
-                               timeout=240)
-            dt = time.time() - t0
-            if r.returncode == 0:
-                ok = True
-                break
-            last_err = (r.stderr or r.stdout or '')[-200:]
-            time.sleep(2 * attempt)
-        except Exception as e:
-            dt = time.time() - t0
-            last_err = '%s: %s' % (type(e).__name__, e)
-            time.sleep(2 * attempt)
+        rc, out, err = _run(cmd, timeout=240)
+        if rc == 0:
+            ok = True
+            break
+        last_err = (err or out)[-200:]
+        time.sleep(2 * attempt)
     mb = os.path.getsize(path) / 1048576
-    status = 'OK ' if ok else 'FAIL'
     detail = last_err.replace('\n', ' ')[:120] if not ok else ''
     print('[%s] %-55s %6.2f MB  %5.1fs  %s'
-          % (status, name, mb, time.time() - t0, detail), flush=True)
+          % ('OK ' if ok else 'FAIL', name, mb, time.time() - t0, detail),
+          flush=True)
     return ok
-
-
 def main():
     workers = 8
-    resume = '--resume' in sys.argv
+    force = '--force' in sys.argv
     if '--workers' in sys.argv:
         try:
             workers = int(sys.argv[sys.argv.index('--workers') + 1])
         except (IndexError, ValueError):
             pass
     files = sorted(glob.glob(os.path.join(DATA_DIR, '*.json')))
-    if resume:
-        done = done_from_log()
-        files = = [f for f in files if os.path.basename(f) not in done]
-        print('Resume: %d file sudah OK di log, upload %d sisanya'
-              % (len(done), len(files)), flush=True)
-    st = load_state()
-    if st:
+    st = fetch_state() if not force else {}
+    if not force:
         changed = changed_files(files, st)
-        if len(changed) != len(files):
-            print('Cache R2: %d file tidak berubah, dilewati (upload %d saja).'
-                  % (len(files) - len(changed), len(changed)), flush=True)
+        skipped = len(files) - len(changed)
+        if skipped:
+            print('Cache R2: %d file sama, dilewati (upload %d saja).'
+                  % (skipped, len(changed)), flush=True)
         files = changed
-    print('Upload %d file ke bucket %s (workers=%d) menggunakan %s'
-          % (len(files), BUCKET, workers, WRANGLER), flush=True)
+    print('Upload %d file ke bucket %s (workers=%d) -- command %s'
+          % (len(files), BUCKET, workers, ' '.join(_wrangler_cmd())), flush=True)
     if not files:
-        print('Tidak ada file yang perlu di-upload (semua sudah sama di R2).')
+        print('Tidak ada file yang perlu di-upload (semua sudah sama di R2).',
+              flush=True)
+        print('CHANGED:0')
         return 0
     t0 = time.time()
     ok = fail = 0
     with ThreadPoolExecutor(max_workers=workers) as ex:
         for path in files:
-            result = upload_one(path)
-            if result:
+            if upload_one(path):
                 ok += 1
                 try:
-                    st[os.path.basename(path)] = [
-                        os.path.getsize(path), round(os.path.getmtime(path) * 1e9)]
+                    st[os.path.basename(path)] = md5_of(path)
                 except OSError:
                     pass
             else:
                 fail += 1
     if ok:
-        save_state(st)
-    print('Selesai: %d OK, %d FAIL, total %ds'
-          % (ok,, fail,, time.time() - t0], flush=True)
-    return 1 if fail else  ​0
+        push_state(st)
+    print('Selesai: %d OK, %d FAIL, total %.0fs' % (ok, fail, time.time() - t0),
+          flush=True)
+    print('CHANGED:%d' % ok)
+    return 1 if fail else 0
+
+
 if __name__ == '__main__':
     sys.exit(main())
