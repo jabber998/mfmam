@@ -1,28 +1,20 @@
-name: Scraper Penuh Mfmam (tambah seri baru, MANUAL)
+name: Update Bab Otomatis (seri existing saja)
 
 on:
+  schedule:
+    # UTC; 03:35 & 09:35 & 15:35 & 21:35 UTC (tiap 6 jam).
+    # MODE UPDATE-ONLY: hanya memeriksa seri yang SUDAH ADA di katalog
+    # (site-content/series/*.json) dan memperbarui bab/date/gambar-nya.
+    # TIDAK scan halaman daftar, TIDAK menambah seri baru.
+    - cron: "35 3,9,15,21 * * *"
   workflow_dispatch:
-    inputs:
-      urls:
-        description: "Tempel URL manga (satu per baris). Kosongkan untuk memakai sources.json."
-        required: false
-        type: string
-      batch:
-        description: "Jumlah manga yang diproses dalam batch ini."
-        required: false
-        type: number
-        default: 20
-      sitemap_url:
-        description: "URL sitemap untuk import daftar seri lengkap (opsional), mis. https://komikindo.ch/sitemap.xml. Kosongkan untuk memakai sources.json."
-        required: false
-        type: string
 
 concurrency:
-  group: scrape-deploy
+  group: update-existing
   cancel-in-progress: false
 
 jobs:
-  scrape-build-deploy:
+  update-build-deploy:
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -31,7 +23,7 @@ jobs:
       # bukan mfmam.pages.dev.
       SITE_URL: ${{ vars.SITE_URL || 'https://mfmam.pages.dev' }}
       # Kredensial Cloudflare: set di Settings -> Secrets:
-      #   CLOUDFLARE_API_TOKEN (token dengan izin Pages:Edit) dan
+      #   CLOUDFLARE_API_TOKEN (token dengan izin Pages:Edit + R2:Edit) dan
       #   CLOUDFLARE_ACCOUNT_ID.
       SCRAPE_IMAGES: "1"
     steps:
@@ -43,33 +35,18 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Tulis URL manual (bila diisi di form)
-        if: github.event_name == 'workflow_dispatch' && inputs.urls != ''
-        env:
-          BATCH: ${{ inputs.urls }}
-        run: |
-          mkdir -p site-content
-          printf '%s\n' "$BATCH" | tr -d '\r' > site-content/manual-batch.txt
-
-      - name: Restore data dari situs live (incremental, tanpa git)
+      - name: Restore data katalog dari situs live
         run: |
           python _restore_data.py || true
 
-      - name: Jalankan scraper (info seri + bab + gambar, incremental)
+      - name: Update seri existing saja (tanpa scan halaman / seri baru)
         env:
-          BATCH_LIMIT: ${{ github.event_name == 'workflow_dispatch' && inputs.batch || '' }}
-          SCRAPE_IMAGES: "1"
-          # Auto-build dimatikan di sini; `python build.py` dijalankan SEKALI
-          # pada step berikutnya agar tidak membangun `dist/` berulang-ulang.
+          SCRAPE_UPDATE_ONLY: "1"
           SCRAPE_AUTO_BUILD: "0"
-          SCRAPE_SITEMAP_URL: ${{ github.event_name == 'workflow_dispatch' && inputs.sitemap_url || '' }}
+          # Update-only: proses SEMUA seri tersimpan (jangan dibatasi batch).
+          BATCH_LIMIT: ""
         run: |
           python scraper.py
-
-      - name: Bersihkan file manual batch (sekali pakai)
-        if: github.event_name == 'workflow_dispatch'
-        run: |
-          rm -f site-content/manual-batch.txt
 
       - name: Build situs statis (dist/)
         run: |
@@ -84,8 +61,6 @@ jobs:
             echo "::error::CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID belum di-set."
             exit 1
           fi
-          # Setiap file dist-data/data/<slug>.json -> key data/<slug>.json.
-          # Loop disengaja (bukan parallelism) agar stabil & mudah dibaca log.
           total=$(find dist-data/data -name '*.json' | wc -l)
           i=0
           for f in dist-data/data/*.json; do
@@ -110,10 +85,7 @@ jobs:
             exit 1
           fi
           # TANPA --branch: setiap deploy langsung masuk PRODUCTION
-          # (mfmam.pages.dev). Bila memakai --branch=cabang lain, deploy akan
-          # menjadi PREVIEW dengan URL acak *.pages.dev, bukan produksi.
-          # wrangler.toml di root otomatis menyambungkan Pages Function
-          # (functions/data/[slug].js) dengan binding R2 mfmam_data.
+          # (mfmam.pages.dev).
           npx wrangler@4 pages deploy dist \
             --project-name=${{ vars.PAGES_PROJECT || 'mfmam' }}
         env:

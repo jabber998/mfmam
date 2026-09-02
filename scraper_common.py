@@ -1415,52 +1415,76 @@ def run(adapter, auto_build=None):
                   and ('--dates' in sys.argv
                        or os.environ.get('SCRAPE_DATES', '').strip()
                        not in ('', '0')))
+    # MODE UPDATE-ONLY (SCRAPE_UPDATE_ONLY=1, 'true', 'yes', 'on'):
+    # Hanya memeriksa & memperbarui seri yang SUDAH ADA di katalog
+    # (site-content/series/*.json). Tidak scan halaman daftar / sitemap,
+    # tidak menambah seri baru, tidak import manual-batch.
+    update_only = os.environ.get('SCRAPE_UPDATE_ONLY', '').strip().lower() \
+        in ('1', 'true', 'yes', 'on')
     # Seed dari sitemap (opsional): import daftar seri LENGKAP dari sitemap
     # (mis. https://komikindo.ch/sitemap.xml). Argumen `--seed-sitemap <url>`
     # ATAU env SCRAPE_SITEMAP_URL (beberapa URL dipisah koma). Entri sitemap
     # ditaruh PALING DEPAN sehingga BATCH_LIMIT/MAX_NEW_SERIES berlaku untuk
     # seri dari sitemap lebih dulu; pagination daftar dimatikan pada mode ini.
-    seed_sitemap = os.environ.get('SCRAPE_SITEMAP_URL', '').strip()
-    if '--seed-sitemap' in sys.argv:
-        k = sys.argv.index('--seed-sitemap')
-        if k + 1 < len(sys.argv) and not sys.argv[k + 1].startswith('--'):
-            seed_sitemap = (seed_sitemap + ',' if seed_sitemap else '') \
-                + sys.argv[k + 1].strip()
-        else:
-            print('   ! --seed-sitemap butuh nilai URL; diabaikan.')
-    entries = []
-    if seed_sitemap:
-        for u in [x.strip() for x in seed_sitemap.split(',') if x.strip()]:
-            try:
-                entries += adapter.sitemap_series_entries(u)
-            except Exception as ex:
-                print('   ! gagal baca sitemap %s: %s' % (u, ex))
+    # MODE UPDATE-ONLY: daftar entri diambil dari SERI YANG SUDAH ADA di
+    # katalog (site-content/series/*.json) milik adaptor ini. Sumber dari
+    # sources.json (listing halaman) / sitemap / manual-batch TIDAK dipakai,
+    # sehingga tidak ada seri baru yang ditambahkan & tidak ada scan halaman
+    # daftar. Setiap seri di-scrape ulang dari halaman serinya (source_url).
+    if update_only:
+        seri_existing = list_series_files()
+        entries = []
+        for _p in seri_existing:
+            d = load_json_file(_p) or {}
+            u = (d.get('source_url') or '').strip()
+            if not u or not adapter.match_url(u):
+                continue
+            entries.append({'url': u, 'slug': d.get('slug'),
+                            'title': d.get('title'),
+                            'auto_title': True})
+        seed_sitemap = ''
+        print('[scraper] MODE UPDATE-ONLY: %d seri tersimpan milik %s akan '
+              'diperbarui (tanpa scan daftar / seri baru).'
+              % (len(entries), adapter.name))
         if not entries:
-            print('   ! sitemap tidak menghasilkan seri; lanjut ke sumber lain.')
-    src_data = load_json_file(SRC)
-    has_sources = bool(src_data)
-    if src_data is not None:
-        my_src = 0
-        for e in src_data:
-            if adapter.matches(e):
-                entries.append(e)
-                my_src += 1
-        if my_src:
-            print('[scraper] %d entri sumber milik %s diproses.' %
-                  (my_src, adapter.name))
-        elif has_sources:
-            print('[scraper] tidak ada entri milik %s di sources.json '
-                  '(dilewati).' % adapter.name)
-    manual_txt = os.path.join(ROOT, 'site-content', 'manual-batch.txt')
-    if os.path.exists(manual_txt):
-        with open(manual_txt, encoding='utf-8-sig') as fh:
-            for line in fh:
-                u = url_to_entry(line)
-                if u and adapter.match_url(u.get('url') or ''):
-                    entries.append(u)
-                elif u:
-                    print('   ! URL manual %s bukan milik %s; dilewati.'
-                          % (u.get('url'), adapter.name))
+            print('   ! belum ada seri tersimpan milik %s; jalankan scrape '
+                  'penuh dulu (tanpa SCRAPE_UPDATE_ONLY).' % adapter.name)
+            return 0
+    else:
+        seed_sitemap = os.environ.get('SCRAPE_SITEMAP_URL', '').strip()
+        entries = []
+        if seed_sitemap:
+            for u in [x.strip() for x in seed_sitemap.split(',') if x.strip()]:
+                try:
+                    entries += adapter.sitemap_series_entries(u)
+                except Exception as ex:
+                    print('   ! gagal baca sitemap %s: %s' % (u, ex))
+            if not entries:
+                print('   ! sitemap tidak menghasilkan seri; lanjut ke sumber lain.')
+        src_data = load_json_file(SRC)
+        has_sources = bool(src_data)
+        if src_data is not None:
+            my_src = 0
+            for e in src_data:
+                if adapter.matches(e):
+                    entries.append(e)
+                    my_src += 1
+            if my_src:
+                print('[scraper] %d entri sumber milik %s diproses.' %
+                      (my_src, adapter.name))
+            elif has_sources:
+                print('[scraper] tidak ada entri milik %s di sources.json '
+                      '(dilewati).' % adapter.name)
+        manual_txt = os.path.join(ROOT, 'site-content', 'manual-batch.txt')
+        if os.path.exists(manual_txt):
+            with open(manual_txt, encoding='utf-8-sig') as fh:
+                for line in fh:
+                    u = url_to_entry(line)
+                    if u and adapter.match_url(u.get('url') or ''):
+                        entries.append(u)
+                    elif u:
+                        print('   ! URL manual %s bukan milik %s; dilewati.'
+                              % (u.get('url'), adapter.name))
     # Terminal interaktif & sumber kosong: tawarkan menempel URL langsung.
     if not entries and interactive():
         u = ask_text(
