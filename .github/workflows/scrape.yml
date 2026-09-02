@@ -16,6 +16,26 @@ on:
         description: "URL sitemap untuk import daftar seri lengkap (opsional), mis. https://komikindo.ch/sitemap.xml. Kosongkan untuk memakai sources.json."
         required: false
         type: string
+      scrape_series_workers:
+        description: "Jumlah seri yang diproses BERSAMAAN (paralel lintas-seri). 1 = satu per satu (perilaku lama); >1 = lebih cepat tapi ritme request ke sumber ikut meningkat."
+        required: false
+        type: number
+        default: 1
+      scrape_workers:
+        description: "Jumlah worker paralel per-seri untuk mengambil gambar/tanggal bab (SCRAPE_WORKERS)."
+        required: false
+        type: number
+        default: 4
+      scrape_parallel_min:
+        description: "Ambang jumlah bab agar mode paralel otomatis aktif (SCRAPE_PARALLEL_MIN), mis. 50 = paralel hanya bila bab yang diproses > 50."
+        required: false
+        type: number
+        default: 50
+      scrape_max_new:
+        description: "Batas maksimal seri BARU (belum ada di katalog) yang boleh ditambahkan dalam sekali run (SCRAPE_MAX_NEW)."
+        required: false
+        type: number
+        default: 200
 
 concurrency:
   group: scrape-deploy
@@ -63,6 +83,12 @@ jobs:
           # pada step berikutnya agar tidak membangun `dist/` berulang-ulang.
           SCRAPE_AUTO_BUILD: "0"
           SCRAPE_SITEMAP_URL: ${{ github.event_name == 'workflow_dispatch' && inputs.sitemap_url || '' }}
+          # Pemicu paralel lintas-seri & pengaturan paralel (bisa dikosongkan;
+          # scraper_common memakai default bila env kosong/absen).
+          SCRAPE_SERIES_WORKERS: ${{ github.event_name == 'workflow_dispatch' && inputs.scrape_series_workers || '' }}
+          SCRAPE_WORKERS: ${{ github.event_name == 'workflow_dispatch' && inputs.scrape_workers || '' }}
+          SCRAPE_PARALLEL_MIN: ${{ github.event_name == 'workflow_dispatch' && inputs.scrape_parallel_min || '' }}
+          SCRAPE_MAX_NEW: ${{ github.event_name == 'workflow_dispatch' && inputs.scrape_max_new || '' }}
         run: |
           python scraper.py
 
