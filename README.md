@@ -35,9 +35,11 @@ Semua perintah dijalankan dari **folder root repo ini**.
 | `python scraper.py --refresh-images` | Perbaiki URL gambar bab yg rusak/berubah (interaktif: pilih seri) |
 | `python scraper.py --refresh-images <slug>...` | Perbaiki URL gambar bab utk seri tertentu (non-interaktif) |
 | `python scraper.py --refresh-images <slug> --chapters <spec>` | Hanya bab tertentu (contoh: `1,3,5` / `2-10` / `latest:3`) |
-| `python build.py` | Bangun halaman statis dari `site-content/` ke `dist/` (daftar di-paginasi maks. 30 seri) |
+| `python build.py` | Bangun halaman statis dari `site-content/` ke `dist/`; data katalog disiapkan di `dist-data/` (untuk R2) |
 | `python _restore_data.py` | Ambil data katalog dari situs yang live (incremental, tanpa git) |
-| `npx wrangler pages deploy dist --project-name=mfmam` | Deploy `dist/` ke Cloudflare Pages |
+| `python _upload_r2.py` | Upload `dist-data/data/*.json` ke bucket R2 `mfmam-data` (paralel, jalankan ulang untuk resume) |
+| `python _upload_r2.py --resume` | Lanjutkan upload dari log (lewati yang sudah OK) |
+| `npx wrangler pages deploy dist --project-name=mfmam` | Deploy `dist/` + Pages Function + binding R2 ke Cloudflare Pages |
 | `python -m http.server 8000` | Pratinjau situs hasil build secara lokal |
 
 > `scraper.py` (orkestrator) meneruskan perintah yang sama ke KETIGA scraper
