@@ -83,6 +83,31 @@ jobs:
           python build.py
           echo "File di dist: $(find dist -type f | wc -l)"
           echo "Ukuran dist: $(du -sh dist | cut -f1)"
+          echo "File data R2: $(find dist-data -type f | wc -l)"
+
+      - name: Upload data katalog ke R2 (dist-data/ -> bucket mfmam-data)
+        run: |
+          if [ -z "$CLOUDFLARE_API_TOKEN" ] || [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
+            echo "::error::CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID belum di-set."
+            exit 1
+          fi
+          # Setiap file dist-data/data/<slug>.json -> key data/<slug>.json.
+          # Loop disengaja (bukan parallelism) agar stabil & mudah dibaca log.
+          total=$(find dist-data/data -name '*.json' | wc -l)
+          i=0
+          for f in dist-data/data/*.json; do
+            i=$((i+1))
+            key=$(basename "$f")
+            npx wrangler@4 r2 object put "mfmam-data/data/$key" \
+              --file "$f" --remote --content-type application/json >/dev/null 2>&1 \
+              || { echo "::error::Gagal upload $key"; exit 1; }
+            if [ $((i % 50)) -eq 0 ] || [ "$i" -eq "$total" ]; then
+              echo "Upload R2: $i/$total"
+            fi
+          done
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
       - name: Deploy ke Cloudflare Pages
         id: deploy
@@ -94,6 +119,8 @@ jobs:
           # TANPA --branch: setiap deploy langsung masuk PRODUCTION
           # (mfmam.pages.dev). Bila memakai --branch=cabang lain, deploy akan
           # menjadi PREVIEW dengan URL acak *.pages.dev, bukan produksi.
+          # wrangler.toml di root otomatis menyambungkan Pages Function
+          # (functions/data/[slug].js) dengan binding R2 mfmam_data.
           npx wrangler@4 pages deploy dist \
             --project-name=${{ vars.PAGES_PROJECT || 'mfmam' }}
         env:
