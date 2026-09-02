@@ -4,7 +4,9 @@
 // sehingga assets/script.js (fetch('/data/' + slug + '.json')) tidak perlu diubah.
 export async function onRequestGet(context) {
   const { env, params } = context;
-  const slug = String(params.slug || '');
+  // URL reader memakai /data/<slug>.json (dengan .json), route [slug] menangkap
+  // slug termasuk ekstensi. Bersihkan `.json` agar key R2 pas: data/<slug>.json.
+  const slug = String(params.slug || '').replace(/\.json$/i, '');
   const key = 'data/' + slug + '.json';
 
   const obj = await env.mfmam_data.get(key);
