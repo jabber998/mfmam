@@ -4,6 +4,8 @@ __pycache__/
 
 # hasil build (dibangkitkan build.py dari site-content/)
 dist/
+# data R2 (dibangkitkan build.py; di-upload ke bucket R2 mfmam-data)
+dist-data/
 manga/
 genre/
 daftar-komik/
@@ -33,3 +35,8 @@ chapter-*/
 netlify.toml
 vercel.json
 _netlify_build.py
+
+# kredensial login wrangler (OAuth) & log lokal
+.wrangler/
+*.log
+*.log.err

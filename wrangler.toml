@@ -1,0 +1,12 @@
+# Wrangler config untuk project Cloudflare Pages `mfmam`.
+# Menyambungkan Pages Function ke bucket R2 `mfmam-data` lewat binding `mfmam_data`.
+# Data katalog (data/<slug>.json) dibaca dari R2 oleh functions/data/[slug].js,
+# sehingga folder dist/ hanya berisi halaman statis + aset (jauh lebih ringan).
+name = "mfmam"
+compatibility_date = "2024-11-01"
+pages_build_output_dir = "dist"
+
+# Binding R2 untuk Pages Functions
+[[r2_buckets]]
+binding = "mfmam_data"
+bucket_name = "mfmam-data"

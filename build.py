@@ -44,6 +44,11 @@ import shutil
 ROOT = os.path.dirname(os.path.abspath(__file__))
 CONTENT = os.path.join(ROOT, 'site-content')
 DIST = os.path.join(ROOT, 'dist')
+# Data katalog (data/<slug>.json + manifest) dipisah ke dist-data/ agar
+# TIDAK ikut di-deploy ke Cloudflare Pages (halaman statis jadi ringan).
+# Isi dist-data/ di-upload ke R2 bucket dan disajikan Pages Function
+# (functions/data/[slug].js) lewat binding R2 — lihat wrangler.toml.
+DATA_OUT = os.path.join(ROOT, 'dist-data')
 
 # Domain publik dipakai untuk <loc> sitemap. Bisa diset di env SITE_URL
 # (tanpa garis miring akhir), mis. https://mfmam.pages.dev
@@ -297,6 +302,29 @@ def write_bytes(path, data):
         fh.write(data)
 
 
+# --- penulisan data R2 (dist-data/) --------------------------------
+# File di sini di-upload ke bucket R2 `mfmam-data` dengan key `data/<name>`.
+# Struktur folder: dist-data/data/<slug>.json, dist-data/data/manifest.json, dst.
+
+
+def _data_path(name):
+    return os.path.join(DATA_OUT, 'data', name)
+
+
+def write_data(name, content):
+    full = _data_path(name)
+    os.makedirs(os.path.dirname(full), exist_ok=True)
+    with open(full, 'w', encoding='utf-8') as fh:
+        fh.write(content)
+
+
+def write_bytes_data(name, data):
+    full = _data_path(name)
+    os.makedirs(os.path.dirname(full), exist_ok=True)
+    with open(full, 'wb') as fh:
+        fh.write(data)
+
+
 def meta_line(label, value):
     return ('<div class="meta-row"><span class="meta-label">%s</span>'
             '<span class="meta-value">%s</span></div>' % (esc(label), esc(value)))
@@ -402,6 +430,11 @@ def build():
                          {'site_name': 'Mfmam', 'tagline': 'Baca Komik Manhwa'})
     site = settings.get('site_name') or 'Mfmam'
     tagline = settings.get('tagline') or ''
+    # Hapus sisa `dist/data/` dari build versi lama (data kini di R2); juga
+    # bersihkan dist-data/ agar tidak menumpuk file yang sudah batal.
+    shutil.rmtree(os.path.join(DIST, 'data'), ignore_errors=True)
+    if os.path.isdir(DATA_OUT):
+        shutil.rmtree(DATA_OUT, ignore_errors=True)
     series, pages = [], []
     src_map = {}   # slug -> path file JSON asli di site-content/series
     sdir = os.path.join(CONTENT, 'series')
@@ -539,26 +572,28 @@ def build():
                           series_page_html(s), site, tagline))
         # data/<slug>.json memuat SEMUA bab + images; dipanggil reader saat bab
         # dibuka (fetch + hash #bab/N). File boleh besar (≤25 MiB per file).
+        # Karena disimpan di R2 (dist-data/data/), reader tetap mengakses
+        # /data/<slug>.json lewat Pages Function yang membaca R2.
         _src = src_map.get(slug)
         if _src and os.path.exists(_src):
-            write_bytes('data/%s.json' % slug, open(_src, 'rb').read())
+            write_bytes_data('%s.json' % slug, open(_src, 'rb').read())
         else:
-            write('data/%s.json' % slug,
-                  json.dumps(s, ensure_ascii=False, indent=2))
+            write_data('%s.json' % slug,
+                       json.dumps(s, ensure_ascii=False, indent=2))
 
     # state resume pagination ikut dideploy agar run berikutnya bisa restore.
     _st = load_json(os.path.join(CONTENT, 'scrape-state.json'), {})
     if _st:
-        write('data/scrape-state.json',
-              json.dumps(_st, ensure_ascii=False, indent=2))
+        write_data('scrape-state.json',
+                   json.dumps(_st, ensure_ascii=False, indent=2))
 
     # manifest: daftar slug seri yang tersedia. Dipakai _restore_data.py
     # (dijalankan GitHub Actions) untuk men-download data yg sama kembali
     # sebelum scrape berikutnya — supaya data TIDAK perlu di-commit ke git,
     # tapi state (gambar/tanggal bab) tetap tersedia secara incremental.
-    write('data/manifest.json',
-          json.dumps([s.get('slug') for s in series if s.get('slug')],
-                     ensure_ascii=False, indent=2))
+    write_data('manifest.json',
+               json.dumps([s.get('slug') for s in series if s.get('slug')],
+                          ensure_ascii=False, indent=2))
 
     sitemap.append('</urlset>')
     write('search.json', json.dumps(search, ensure_ascii=False))
@@ -583,12 +618,24 @@ def build():
             total_bytes += sz
             if sz > biggest[1]:
                 biggest = (os.path.relpath(fp, DIST), sz)
+    # Statistik data R2 (dist-data/) — tidak ikut deploy Pages.
+    n_data = sum(len(fs) for _, _, fs in os.walk(DATA_OUT)) if os.path.isdir(DATA_OUT) else 0
+    data_bytes = 0
+    if os.path.isdir(DATA_OUT):
+        for root, _, fs in os.walk(DATA_OUT):
+            for fn in fs:
+                try:
+                    data_bytes += os.path.getsize(os.path.join(root, fn))
+                except OSError:
+                    continue
     print('[build] selesai: %d seri, %d bab, %d halaman daftar (maks %d/hlm)'
           % (len(series),
              sum(len(x.get('chapters') or []) for x in series),
              n_pages, PAGE_SIZE))
     print('[build] dist: %d file | %s | domain: %s'
           % (n_files, _fmt_size(total_bytes), SITE_URL))
+    print('[build] data R2 (dist-data/): %d file | %s (di-upload ke bucket mfmam-data)'
+          % (n_data, _fmt_size(data_bytes)))
     if biggest[1]:
         print('[build] file terbesar: %s (%s)'
               % (biggest[0], _fmt_size(biggest[1])))
