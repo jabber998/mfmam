@@ -2,15 +2,34 @@
 __pycache__/
 *.pyc
 
-# hasil build (dibangkitkan _netlify_build.py dari site-content/)
-chapter-*/
-[a-z0-9]*-chapter-*/
+# hasil build (dibangkitkan build.py dari site-content/)
+dist/
 manga/
 genre/
 daftar-komik/
+page/
 kontak/
 raw/
 chapters-index.json
 search.json
 sitemap.xml
 404.html
+_redirects
+
+# data scraping TIDAK di-commit ke git (di-deploy via Cloudflare Pages &
+# di-restore dari situs live oleh _restore_data.py). File ditulis scraper.
+site-content/series/
+site-content/scrape-state.json
+
+# artefak build LAMA (model Netlify: halaman bab per-judul di root).
+# Build baru menulis ke dist/ (di atas); folder lama dibiarkan di disk
+# tapi jangan ikut ter-commit.
+chapter-*/
+[a-z0-9]*-chapter-*/
+*-official-english/
+*-raw/
+
+# artefak hosting lama (sudah migrasi ke Cloudflare Pages)
+netlify.toml
+vercel.json
+_netlify_build.py

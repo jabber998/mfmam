@@ -200,4 +200,190 @@
   }
   applyDates();
   setInterval(applyDates, 60000);
+
+  // ====== READER DINAMIS (model Cloudflare Pages) ======
+  // Halaman bab TIDAK lagi dibuat satu file per bab; bab dibuka lewat hash
+  // `#bab/<kunci>` pada halaman seri, lalu data dibaca dari /data/<slug>.json
+  // (memuat images[]) secara client-side. Prev/Next memakai urutan baca (naik).
+  var seriPage = document.querySelector('.seri-page[data-slug]');
+  if (seriPage){
+    var slug = seriPage.getAttribute('data-slug');
+    var readerShell = document.getElementById('reader');
+    // Halaman seri lama / build lama mungkin tak punya elemen reader.
+    if (!readerShell){ return; }
+    var dataCache = {};
+    var sortedChs = null;
+
+    function escA(s){
+      return String(s == null ? '' : s).replace(/&/g, '&amp;')
+        .replace(/"/g, '&quot;').replace(/</g, '&lt;');
+    }
+    function numText(n){
+      if (n == null || n === '') return null;
+      var f = Number(n);
+      return String(Number.isInteger(f) ? f : f);
+    }
+    function keyOf(c){ return c.num != null ? numText(c.num) : (c.slug || 'chapter'); }
+
+    function fromHash(){
+      var m = /#bab\/([^/#?]+)/.exec(location.hash);
+      return m ? decodeURIComponent(m[1]) : null;
+    }
+    function fmtDt(s){
+      var m = /^(\d{4})-(\d{1,2})-(\d{1,2})/.exec(s || '');
+      if (!m) return s || '';
+      var bln = ['', 'Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun',
+                 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'];
+      return parseInt(m[3], 10) + ' ' + (bln[+m[2]] || m[2]) + ' ' + m[1];
+    }
+    function el(tag, cls, txt){
+      var e = document.createElement(tag);
+      if (cls) e.className = cls;
+      if (txt != null) e.textContent = txt;
+      return e;
+    }
+    function loadData(cb){
+      if (dataCache[slug]) return cb(dataCache[slug]);
+      fetch('/data/' + slug + '.json')
+        .then(function(r){ if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+        .then(function(d){ dataCache[slug] = d; cb(d); })
+        .catch(function(){ readerMsg('Data bab gagal dimuat.'); });
+    }
+    function asc(a, b){
+      if (a.num == null) return 1;
+      if (b.num == null) return -1;
+      return a.num - b.num;
+    }
+    function showBox(box){
+      readerShell.innerHTML = '';
+      readerShell.appendChild(box);
+      seriPage.hidden = true;
+      readerShell.hidden = false;
+      window.scrollTo(0, 0);
+    }
+    function readerMsg(text){
+      var box = el('div', 'reader');
+      box.appendChild(el('p', null, text));
+      var back = el('a', 'baca-btn', '\u2190 Kembali ke Detail');
+      back.href = '/manga/' + slug + '/';
+      box.appendChild(back);
+      showBox(box);
+    }
+    function navLink(c, label){
+      var a = el('a', 'nav-btn', label);
+      a.href = '#bab/' + keyOf(c);
+      return a;
+    }
+    function showChapter(key){
+      loadData(function(d){
+        sortedChs = (d.chapters || []).slice().sort(asc);
+        var idx = -1;
+        for (var i = 0; i < sortedChs.length; i++){
+          if (String(keyOf(sortedChs[i])) === String(key)){ idx = i; break; }
+        }
+        if (idx < 0){ readerMsg('Bab tidak ditemukan.'); return; }
+        var c = sortedChs[idx];
+        var box = el('div', 'reader');
+        // baris crumb + nav atas
+        var top = el('div', 'reader-top');
+        var crumb = el('div', 'reader-crumb');
+        var link = el('a', null, d.title || slug);
+        link.href = '/manga/' + slug + '/';
+        crumb.appendChild(link);
+        crumb.appendChild(document.createTextNode(
+          ' \u2014 ' + (c.title || 'Chapter ' + (numText(c.num) || ''))));
+        top.appendChild(crumb);
+        var navTop = el('div', 'reader-nav');
+        if (idx > 0){ navTop.appendChild(navLink(sortedChs[idx - 1], '\u2190 Sebelumnya')); }
+        else navTop.appendChild(el('span', 'nav-btn disabled', '\u2190 Sebelumnya'));
+        top.appendChild(navTop);
+        box.appendChild(top);
+        // judul
+        box.appendChild(el('h1', 'reader-title',
+          c.title || ('Chapter ' + (numText(c.num) || ''))));
+        if (c.date){
+          var dline = el('div', 'reader-date');
+          dline.appendChild(document.createTextNode('Dipublikasikan: '));
+          var sp = el('span', 'ch-dt', fmtDt(c.date));
+          sp.setAttribute('data-date', c.date);
+          sp.setAttribute('data-fmt', fmtDt(c.date));
+          dline.appendChild(sp);
+          box.appendChild(dline);
+        }
+        var content = el('div', 'reader-content');
+        var imgs = (c.images && c.images.length) ? c.images : [];
+        if (imgs.length){
+          var wrap = el('div', 'reader-images');
+          var broken = 0;
+          var fallbackAdded = false;
+          function addBacaSumber(){
+            if (fallbackAdded || !c.external) return;
+            fallbackAdded = true;
+            var srcdiv = el('div', 'reader-src');
+            srcdiv.appendChild(el('p', null,
+              'Gambar tidak dapat dimuat dari CDN. Baca di sumber sebagai gantinya.'));
+            var srcA = el('a', 'baca-btn', 'Baca di Sumber \u2192');
+            srcA.href = c.external; srcA.target = '_blank'; srcA.rel = 'nofollow noopener';
+            srcdiv.appendChild(srcA);
+            content.appendChild(srcdiv);
+          }
+          imgs.forEach(function(u){
+            var img = document.createElement('img');
+            img.src = u; img.alt = c.title || 'Bab';
+            img.loading = 'lazy'; img.decoding = 'async';
+            img.setAttribute('referrerpolicy', 'no-referrer');
+            img.addEventListener('error', function(){
+              // Gambar CDN rusak/kedaluwarsa: sembunyikan; bila SEMUA gambar
+              // gagal, tampilkan tombol fallback ke halaman sumber.
+              this.style.display = 'none';
+              broken++;
+              if (broken === imgs.length) addBacaSumber();
+            });
+            wrap.appendChild(img);
+          });
+          content.appendChild(wrap);
+          if (c.external){
+            var info = el('p', 'reader-info');
+            info.innerHTML = 'Gambar ditayangkan dari CDN sumber. Bila rusak, ' +
+              'baca langsung di <a target="_blank" rel="nofollow noopener" ' +
+              'href="' + escA(c.external) + '">sumber resmi</a>.';
+            content.appendChild(info);
+          }
+        } else if (c.external){
+          var srcdiv = el('div', 'reader-src');
+          srcdiv.appendChild(el('p', null, 'Halaman gambar belum tersedia di sini.'));
+          var srcA = el('a', 'baca-btn', 'Baca di Sumber \u2192');
+          srcA.href = c.external; srcA.target = '_blank'; srcA.rel = 'nofollow noopener';
+          srcdiv.appendChild(srcA);
+          content.appendChild(srcdiv);
+        } else {
+          content.appendChild(el('p', null, 'Konten kosong.'));
+        }
+        box.appendChild(content);
+        // nav bawah
+        var navBot = el('div', 'reader-nav');
+        if (idx < sortedChs.length - 1){ navBot.appendChild(navLink(sortedChs[idx + 1], 'Berikutnya \u2192')); }
+        else navBot.appendChild(el('span', 'nav-btn disabled', 'Berikutnya \u2192'));
+        box.appendChild(navBot);
+        showBox(box);
+        try {
+          var base = (document.title || '').split(' - ').pop() || 'Mfmam';
+          document.title = (c.title || 'Chapter') + ' - ' + (d.title || slug) + ' - ' + base;
+        } catch(e){}
+      });
+    }
+    function showSeries(){
+      sortedChs = null;
+      readerShell.hidden = true;
+      readerShell.innerHTML = '';
+      seriPage.hidden = false;
+    }
+    function routeReader(){
+      var key = fromHash();
+      if (key != null){ showChapter(key); }
+      else { showSeries(); }
+    }
+    window.addEventListener('hashchange', routeReader);
+    routeReader();
+  }
 })();

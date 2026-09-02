@@ -49,6 +49,13 @@ padding:9px 18px;border-radius:8px}
 overflow:hidden;display:block;color:var(--fg)}
 .manga-card .thumb{position:relative;aspect-ratio:2/3;background:var(--bg2)}
 .manga-card .cover{width:100%;height:100%;object-fit:cover}
+.status-badge{position:absolute;top:8px;left:8px;z-index:2;color:#fff;
+font-size:.62rem;font-weight:700;letter-spacing:.4px;text-transform:uppercase;
+padding:3px 8px;border-radius:20px;background:var(--accent);
+box-shadow:0 1px 6px rgba(0,0,0,.45)}
+.status-ongoing{background:#16a34a}
+.status-hiatus{background:#d97706}
+.status-completed{background:#3b82f6}
 .manga-card .placeholder{display:flex;align-items:center;justify-content:center;
 width:100%;height:100%;font-size:2.4rem;color:var(--muted);background:var(--card)}
 .chap-latest{position:absolute;right:8px;bottom:8px;background:rgba(0,0,0,.7);color:#fff;
@@ -68,6 +75,22 @@ white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding:1px 2px}
 .count-line,.more-wrap{color:var(--muted);margin:20px 0}
 .more-btn{display:inline-block;background:var(--card);border:1px solid var(--line);
 padding:10px 20px;border-radius:8px;color:var(--fg);font-weight:600}
+
+/* pagination (beranda, daftar-komik, genre) */
+.pagination{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;align-items:center;
+margin:30px 0 6px}
+.pagination .pg{display:inline-flex;align-items:center;justify-content:center;
+min-width:38px;height:38px;padding:0 13px;background:var(--card);border:1px solid var(--line);
+border-radius:8px;color:var(--fg);font-weight:600;font-size:.9rem;white-space:nowrap}
+.pagination .pg:hover{border-color:var(--accent);color:var(--accent)}
+.pagination .pg.cur{background:var(--accent);border-color:var(--accent);color:#fff;
+pointer-events:none}
+.pagination .pg.disabled{opacity:.35;pointer-events:none}
+.pagination .pg.dots{border:none;background:none;color:var(--muted);min-width:auto;height:auto}
+.pagination .pg[rel="prev"],.pagination .pg[rel="next"]{font-weight:800}
+.pagi-head{margin:10px 0 18px}
+.pagi-head .crumb{color:var(--muted);font-size:.85rem;display:inline-block;margin-bottom:6px}
+.pagi-head .page-title{margin:4px 0 0}
 
 /* cari bab (halaman daftar manhwa) */
 .chapter-search{background:var(--card);border:1px solid var(--line);
@@ -122,6 +145,7 @@ border:1px solid var(--line);padding:10px 14px;border-radius:8px;color:var(--fg)
 border-radius:8px;color:var(--fg);font-weight:600}
 .nav-btn.disabled{opacity:.4;pointer-events:none}
 .reader-chapters{margin:6px 0 18px}
+.reader-chlist{margin:14px 0 6px}
 .chap-list{border:1px solid var(--line);border-radius:8px;background:var(--card)}
 .chap-list summary{cursor:pointer;padding:10px 14px;font-weight:600}
 .chap-list ul{max-height:260px;overflow:auto;list-style:none}

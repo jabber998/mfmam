@@ -1,790 +1,99 @@
 # -*- coding: utf-8 -*-
 """
-Scraper katalog Mfmam - versi CLOUD (GitHub Actions / Netlify build).
-Membaca site-content/sources.json (dan optional site-content/manual-batch.txt),
-menulis langsung ke site-content/series/<slug>.json (skema dipakai bersama
-Decap CMS & _netlify_build.py).
+Scraper katalog Mfmam — orkestrator MULTI-SUMBER.
 
-Skema satu seri:
-{
-  slug, title, desc, genres[], cover_url,
-  status, author, illustrator, alt_title, type, keywords,
-  chapters: [ { slug, title, num, external, images[] } ]
-}
+Sejak scraper dipecah per sumber, perintah tunggal ini menjalankan KETIGA
+scraper secara berurutan dalam satu run:
 
-Mode:
-  * LINK (default): hanya judul bab + link sumber (external), tanpa gambar.
-  * GAMBAR   (--images atau env SCRAPE_IMAGES=1): ikut mengambil URL gambar tiap
-    bab dari halaman sumber. Gambar dicatat sebagai URL CDN/mirror sumber
-    (hotlink; halaman dibangun dengan referrerpolicy="no-referrer"), jadi TIDAK
-    disimpan ke repo. Bab yang sudah punya `images` tidak di-fetch ulang
-    (incremental), sehingga run rutin cepat.
-  * TANGGAL  (--dates atau env SCRAPE_DATES=1): ikut mengambil tanggal terbit
-    tiap bab (article:published_time) dari halaman bab sumber. Bab yang sudah
-    punya `date` tidak di-fetch ulang (incremental).
+  1) scraper_komikindo.py   — situs HTML tema WordPress/Madara (mis. komikindo.ch)
+  2) scraper_mikoroku.py    — katalog JSON publik + feed Blogger (mikoroku.com)
+  3) scraper_doujindesu.py  — API terenkripsi doujin.desu.xxx
 
-Pastikan Anda berhak menautkan/menampilkan sumber yang dipilih.
+Mesin bersama (network, retry, state pagination, dedupe, CLI, auto-build)
+ada di scraper_common.py. Setiap scraper_*.py juga bisa dijalankan sendiri.
 
 Jalankan:
-  python scraper.py            # update (mode link)
-  python scraper.py --images   # update + ambil gambar bab
-  python scraper.py --dates    # update + ambil tanggal tiap bab
-  python scraper.py --test     # uji parser tanpa network
+  python scraper.py                # update SEMUA sumber (mode link)
+  python scraper.py --images       # update + gambar bab + tanggal tiap bab
+  python scraper.py --dates        # update + tanggal tiap bab (tanpa gambar)
+  python scraper.py --test         # self-test ketiga parser (tanpa network)
+  python scraper.py --delete ...   # hapus seri (lihat scraper_common)
+  python scraper.py --refresh-images ...   # perbaiki URL gambar bab
 """
-import os, re, json, sys, time, random, html as H
-from urllib.request import Request, urlopen
-from urllib.parse import urljoin
-from urllib.error import HTTPError, URLError
+import os
+import sys
+import time
 
-# Tampilkan progres langsung (tanpa buffer) saat log di-redirect ke file.
-try:
-    sys.stdout.reconfigure(line_buffering=True)
-except Exception:
-    pass
+# Impor ketiga scraper SEBELUM menjalankan apa pun: tiap modul mendaftarkan
+# adaptornya ke registry scraper_common lewat register_adapter().
+import scraper_komikindo    # noqa: F401  (KomikindoAdapter)
+import scraper_mikoroku     # noqa: F401  (MikorokuAdapter)
+import scraper_doujindesu   # noqa: F401  (DoujindesuAdapter)
 
-ROOT = os.path.dirname(os.path.abspath(__file__))
-SRC = os.path.join(ROOT, 'site-content', 'sources.json')
-SERIES_DIR = os.path.join(ROOT, 'site-content', 'series')
-UA = ('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
-      'Chrome/124.0 Safari/537.36')
-# Jeda antar request (detik). Diperbesar + jitter acak agar tidak kelihatan
-# seperti bot dan kecil kemungkinan diblokir situs sumber. Atur lewat env
-# SCRAPE_DELAY bila ingin nilai lain, mis. `$env:SCRAPE_DELAY="3"`.
-_delay_env = os.environ.get('SCRAPE_DELAY', '').strip()
-DELAY = float(_delay_env) if _delay_env else 3.0
+from scraper_common import (
+    all_adapters, delete_series, refresh_series_images, run, ts,
+)
 
 
-def polite_delay():
-    """Sleep 50%-150% dari DELAY (jitter) supaya ritme request tidak tetap."""
-    time.sleep(DELAY * random.uniform(0.5, 1.5))
-
-# Jeda antar percobaan ulang sebuah request yang gagal (timeout/DNS/HTTP).
-RETRY_DELAYS = (5, 15, 35)
-# Setelah N kegagalan beruntun, jeda panjang agar sumber tidak makin ketat /
-# DNS pulih dulu. (circuit breaker)
-CIRCUIT_BREAK_AFTER = 4
-CIRCUIT_BREAK_PAUSE = (20.0, 45.0)
-
-# 0 = tanpa batas; selain itu = batas jumlah bab yang diambil gambarnya per run.
-_MAX_CAP = os.environ.get('MAX_IMAGE_CHAPTERS', '')
-MAX_IMAGE_CHAPTERS = int(_MAX_CAP) if _MAX_CAP.isdigit() else 0
-
-# 0 = tanpa batas; selain itu = batas jumlah bab yang diisi tanggalnya per run.
-_MAX_D = os.environ.get('MAX_CHAPTER_DATES', '')
-MAX_CHAPTER_DATES = int(_MAX_D) if _MAX_D.isdigit() else 0
-
-CH_RE = re.compile(r'\b(?:chapter|bab)\s*(\d+(?:\.\d+)?)', re.I)
-ANCHOR_RE = re.compile(r'<a\b[^>]*href=["\']([^"\']+)["\'][^>]*>(.*?)</a>',
-                       re.I | re.S)
-TAG_RE = re.compile(r'<[^>]+>')
-OG_IMG_RE = re.compile(
-    r'<meta\b[^>]*property=["\']og:image["\'][^>]*content=["\']([^"\']+)', re.I)
-OG_T_RE = re.compile(
-    r'<meta\b[^>]*property=["\']og:title["\'][^>]*content=["\']([^"\']+)', re.I)
-TITLE_RE = re.compile(r'<title[^>]*>(.*?)</title>', re.I | re.S)
-GENRE_RE = re.compile(
-    r'<a\b[^>]*href=["\'][^"\']*/genre/[^"\']*["\'][^>]*>(.*?)</a>', re.I | re.S)
-GENRE_CLASS_RE = re.compile(r'\bgenres-([a-z0-9]+)\b', re.I)
-
-IMG_TAG_RE = re.compile(r'<img\b[^>]*>', re.I)
-SRC_ATTR_RE = re.compile(r'\bsrc\s*=\s*["\']([^"\']+)["\']', re.I)
-CHIMG_RE = re.compile(r'<div[^>]*id="chimg-[^"]*"[^>]*>(.*?)</div>',
-                      re.I | re.S)
-CHIMG_CLASS_RE = re.compile(
-    r'<div[^>]*class="[^"]*\bchapter-image\b[^"]*"[^>]*>(.*?)</div>',
-    re.I | re.S)
-DESC_RE = re.compile(
-    r'<div[^>]*class="[^"]*\bentry-content-single\b[^"]*"[^>]*>(.*?)</div>',
-    re.I | re.S)
-META_DESC_RE = re.compile(
-    r'<meta[^>]*name="description"[^>]*content="([^"]*)"', re.I)
-INFO_ROW_RE = re.compile(r'<b>\s*(.*?)\s*</b>\s*(.*?)(?=<b>\s*|$)',
-                         re.I | re.S)
-
-# Tanggal update terakhir, dikutip dari halaman seri sumber.
-# Prioritas: kalimat "Update chapter terbaru komik X adalah tanggal Agustus 25, 2026."
-# lalu meta article:modified_time / og:updated_time (format ISO), lalu <time datetime>.
-UPD_TXT_RE = re.compile(
-    r'Update\s+chapter\s+terbaru\s+komik\b.*?\badalah\s+tanggal\s+'
-    r'([A-Za-z]+)\s+(\d{1,2}),\s+(\d{4})', re.I | re.S)
-UPD_META_RE = re.compile(
-    r'<meta[^>]+(?:article:modified_time|og:updated_time)[^>]+'
-    r'content="(\d{4}-\d{2}-\d{2})', re.I)
-UPD_TIME_RE = re.compile(
-    r'<time\b[^>]*datetime="(\d{4}-\d{2}-\d{2})"', re.I)
-
-# Tanggal terbit per-bab, dikutip dari halaman bab sumber.
-CH_DATE_RE = re.compile(
-    r'<meta[^>]+(?:article:published_time|article:modified_time|'
-    r'og:updated_time)[^>]+content="(\d{4}-\d{2}-\d{2})', re.I)
-CH_DATE_LD_RE = re.compile(
-    r'"(?:datePublished|dateModified|uploadDate)"\s*:\s*'
-    r'"(\d{4}-\d{2}-\d{2})[T ]', re.I)
-CH_DATE_TIME_RE = re.compile(
-    r'<time\b[^>]*datetime="(\d{4}-\d{2}-\d{2})"', re.I)
-
-# Nama bulan (sumber memakai Bahasa Indonesia / Inggris) -> nomor bulan.
-MONTH_NUM = {
-    'januari': 1, 'februari': 2, 'maret': 3, 'april': 4, 'mei': 5, 'juni': 6,
-    'juli': 7, 'agustus': 8, 'september': 9, 'oktober': 10, 'november': 11,
-    'desember': 12,
-    'january': 1, 'february': 2, 'march': 3, 'april': 4, 'may': 5, 'june': 6,
-    'july': 7, 'august': 8, 'september': 9, 'october': 10, 'november': 11,
-    'december': 12,
-}
+def _summarize(adapters, t_all):
+    print()
+    print('=' * 60)
+    print('Scraper multi-sumber selesai. Ringkasan adaptor:')
+    for a in adapters:
+        print('  - %-12s %s' % (a.name, a.description))
+    print('Total durasi: %ds (%s)' % (round(time.time() - t_all), ts()))
+    print('=' * 60)
 
 
-def extract_last_updated(html):
-    """Kembalikan tanggal update terakhir `YYYY-MM-DD` dari halaman seri sumber."""
-    m = UPD_TXT_RE.search(html)
-    if m:
-        mo = MONTH_NUM.get(m.group(1).strip().lower())
-        if mo:
-            return '%04d-%02d-%02d' % (int(m.group(3)), mo, int(m.group(2)))
-    m = UPD_META_RE.search(html) or UPD_TIME_RE.search(html)
-    if m:
-        return m.group(1)
-    return ''
-
-
-def extract_chapter_date(html):
-    """Kembalikan tanggal terbit bab `YYYY-MM-DD` dari HTML halaman bab sumber."""
-    m = CH_DATE_RE.search(html) or CH_DATE_LD_RE.search(html) \
-        or CH_DATE_TIME_RE.search(html)
-    return m.group(1) if m else ''
-
-# label di halaman sumber -> kunci JSON (dinormalisasi huruf kecil).
-INFO_KEYMAP = {
-    'status': 'status',
-    'pengarang': 'author',
-    'penulis': 'author',
-    'ilustrator': 'illustrator',
-    'artist': 'illustrator',
-    'judul alternatif': 'alt_title',
-    'genre': 'genres',
-    'tema': 'themes',
-    'jenis komik': 'type',
-    'type': 'type',
-    'rating': 'rating',
-    'rilis': 'released',
-    'updated': 'updated',
-}
-
-
-def clean(t):
-    return re.sub(r'\s+', ' ', H.unescape(TAG_RE.sub('', t or ''))).strip()
-
-
-def clean_title(t):
-    """Judul bersih khas situs sumber:
-    'Komik One Piece: Ace Story - KomikIndo' -> 'One Piece Ace Story'.
-    - titik dua diganti spasi (bagian setelah ':' TIDAK dibuang),
-    - awalan branding 'Komik/Manga/Manhwa/Baca Komik' dibuang,
-    - akhiran ' - KomikIndo' dibuang."""
-    t = clean(t)
-    t = re.sub(r'\s*:\s*', ' ', t)
-    t = re.sub(r'\s+', ' ', t).strip()
-    t = re.sub(r'\s*-\s*(?:KomikIndo|Komikindo|Baca\s+Komik|Komik\s+Indonesia)[\w .]*$',
-               '', t, flags=re.I).strip()
-    t = re.sub(r'^(?:Baca\s+)?(?:Komik|Manga|Manhwa|Komik\s+Indo)\s+',
-               '', t, flags=re.I).strip()
-    return t
-
-
-def slugify(s):
-    s = re.sub(r'[^a-z0-9]+', '-', (s or '').strip().lower())
-    return re.sub(r'-+', '-', s).strip('-')
-
-
-def fetch(url, timeout=30):
-    """Ambil HTML halaman dengan retry + backoff untuk gangguan sementara
-    (timeout, DNS gagal, handshake timeout, HTTP 429/503/403)."""
-    last = None
-    # percobaan ke-0 langsung, lalu retry sesuai RETRY_DELAYS
-    for attempt in range(len(RETRY_DELAYS) + 1):
-        try:
-            req = Request(url, headers={'User-Agent': UA, 'Accept': 'text/html',
-                                        'Accept-Language': 'id,en;q=0.8'})
-            with urlopen(req, timeout=timeout) as r:
-                return r.read().decode('utf-8', 'ignore')
-        except HTTPError as ex:
-            last = ex
-            if ex.code in (403, 429, 503):
-                print('   ! HTTP %s (kemungkinan rate-limit) %s' % (ex.code, url))
-            else:
-                print('   ! HTTP %s %s' % (ex.code, url))
-        except Exception as ex:
-            last = ex
-            print('   ! request %s gagal: %s' % (url, ex))
-        if attempt < len(RETRY_DELAYS):
-            w = RETRY_DELAYS[attempt]
-            print('     coba ulang dalam %ds (percobaan %d/%d)...'
-                  % (w, attempt + 1, len(RETRY_DELAYS)))
-            time.sleep(w)
-    raise last if last else Exception('fetch gagal: %s' % url)
-
-
-def pause_on_failures(consecutive):
-    """Kalau sudah banyak kegagalan beruntun, istirahat panjang (circuit breaker)."""
-    if consecutive >= CIRCUIT_BREAK_AFTER:
-        pause = random.uniform(*CIRCUIT_BREAK_PAUSE)
-        print('   ! %d kegagalan beruntun; istirahat %ds agar sumber pulih...'
-              % (consecutive, round(pause)))
-        time.sleep(pause)
+def main():
+    if '--test' in sys.argv:
+        # Jalankan self-test semua adaptor tanpa menyentuh jaringan.
+        for a in all_adapters():
+            print('\n--- self-test %s ---' % a.name)
+            a.test()
+        print('\n[test] semua self-test selesai.')
         return 0
-    return consecutive
+    if '--delete' in sys.argv:
+        # Hapus seri dari katalog (berlaku untuk semua sumber sekaligus).
+        return delete_series()
+    if '--refresh-images' in sys.argv:
+        # Perbaiki URL gambar per-seri; adaptor dipilih otomatis berdasarkan
+        # source_url tiap file (adapter_for_url).
+        return refresh_series_images(adapter=None)
 
+    adapters = all_adapters()
+    if not adapters:
+        print('Tidak ada adaptor sumber yang terdaftar '
+              '(scraper_*.py tidak terimpor).')
+        return 1
 
-def load_json_file(path):
-    """Baca JSON toleran BOM (utf-8-sig). BOM sering muncul dari editor Windows."""
-    try:
-        with open(path, encoding='utf-8-sig') as fh:
-            return json.load(fh)
-    except Exception:
-        return None
+    # Auto-build hanya dijalankan SEKALI setelah SEMUA sumber diproses, agar
+    # tidak membangun ulang situs 3x dalam satu perintah. Mengesampingkan
+    # env SCRAPE_AUTO_BUILD cukup untuk adaptor yang bukan terakhir.
+    env_build = os.environ.get('SCRAPE_AUTO_BUILD', '').strip().lower()
+    last_mode = None
+    if env_build in ('0', 'false', 'no', 'off'):
+        last_mode = False          # user mematikan auto-build total
+    elif env_build in ('1', 'true', 'yes', 'on'):
+        last_mode = True           # user memaksa build selalu (sekali di akhir)
 
-
-# ---------------------------------------------------------------- bab (link)
-
-
-def parse_chapter_links(html, base_url):
-    rows, seen = [], set()
-    for m in ANCHOR_RE.finditer(html):
-        href, label = m.group(1), clean_title(m.group(2))
-        if not label:
-            continue
-        if 'chapter' not in (label + ' ' + href).lower():
-            continue
-        if href.startswith(('mailto:', 'javascript:', '#')):
-            continue
-        url = urljoin(base_url, href)
-        if url in seen:
-            continue
-        seen.add(url)
-        nm = CH_RE.search(label)
-        rows.append({'title': label, 'external': url,
-                     'num': float(nm.group(1)) if nm else None})
-    used = set()
-    for c in rows:
-        base = slugify(c['title'])[:40] or 'chapter'
-        s, k = base, 2
-        while s in used:
-            s = '%s-%d' % (base, k)
-            k += 1
-        used.add(s)
-        c['slug'] = s
-    return rows
-
-
-# ---------------------------------------------------------------- info seri
-
-
-def extract_genres(html):
-    out = []
-    for m in GENRE_RE.finditer(html):
-        l = clean(m.group(1))
-        if l and l not in out:
-            out.append(l)
-    # fallback: class CSS gaya genres-action genres-comedy, dll.
-    if not out:
-        for m in GENRE_CLASS_RE.finditer(html):
-            l = m.group(1).replace('-', ' ').strip()
-            if l:
-                l = ' '.join(w.capitalize() for w in l.split())
-            if l and l not in out:
-                out.append(l)
-    return out[:10]
-
-
-def extract_desc(html):
-    m = DESC_RE.search(html)
-    if m:
-        d = clean(m.group(1))
-        if len(d) > 20:
-            return d
-    m = META_DESC_RE.search(html)
-    if m:
-        return clean(m.group(1))
-    return ''
-
-
-def extract_series_info(html):
-    """Ambil baris '<b>Label</b> Value' dan petakan ke key skema."""
-    info = {}
-    for m in INFO_ROW_RE.finditer(html):
-        label = re.sub(r'\s+', ' ', m.group(1)).strip()
-        label = re.sub(r':\s*$', '', label.lower())
-        val = clean(m.group(2))
-        if not label or not val:
-            continue
-        key = INFO_KEYMAP.get(label)
-        if not key:
-            continue
-        if key == 'genres':
-            info.setdefault('genres', []).extend(
-                [x for x in re.split(r'[,;]', val) if x])
-        else:
-            info[key] = val
-    return info
-
-
-def find_series_url(html, base_url):
-    """Jika URL sumber ternyata halaman bab (berisi reader), cari tautan ke
-    halaman daftar seri (mis. `<a ...>Daftar Chapter</a>` atau `/komik/..`)."""
-    if not re.search(r'id="chimg-|class="[^"]*\bchapter-image\b[^"]*"',
-                     html, re.I):
-        return None
-    m = re.search(r'<a\b[^>]*href="([^"]+)"[^>]*>(?:(?!</a>).)*Daftar\s+Chapter',
-                  html, re.I | re.S)
-    if not m:
-        m = re.search(
-            r'<a\b[^>]*href="([^"]*/(?:komik|manga|seri)/[^"]*)"[^>]*>',
-            html, re.I)
-    if m:
-        out = urljoin(base_url, m.group(1))
-        if re.search(r'/(?:komik|manga|seri)/', out):
-            return out
-    return None
-
-
-# ---------------------------------------------------------------- gambar
-
-
-IMG_ATTR_ORDER = ('data-src', 'data-lazy-src', 'data-original', 'data-url',
-                  'data-echo', 'data-srcset', 'src')
-
-
-def _img_src_from_tag(tag):
-    """Ambil URL dari satu tag <img>; dukung lazy-load (data-src/dst) & srcset."""
-    for attr in IMG_ATTR_ORDER:
-        m = re.search(attr + r'\s*=\s*["\']([^"\']+)["\']', tag, re.I)
-        if not m:
-            continue
-        val = m.group(1).strip()
-        if not val or val.startswith('data:') or val.startswith('java'):
-            continue
-        if 'srcset' in attr:
-            cands = [c.strip().split(' ')[0] for c in val.split(',') if c.strip()]
-            if not cands:
-                continue
-            val = cands[-1]   # kandidat terbesar (paling akhir)
-        return val
-    return None
-
-
-def _is_asset_url(u):
-    """Benar bila URL kemungkinan logo/iklan/aset tema, bukan gambar bab."""
-    low = u.lower()
-    if any(k in low for k in (
-            '/wp-content/themes/', '/wp-content/plugins/', '/wp-includes/',
-            '/favicon', '/sponsor', '/banner/', '/icons/', '/emoji/',
-            '/smiley', 'googleusercontent.com/gadgets', 'data:image',
-            'logo', 'avatar', 'icon-', 'favicon', 'sponsor', 'ads.')):
-        return True
-    return False
-
-
-def _collect_img_urls(texts, base_url):
-    """Kumpulkan URL gambar dari satu/beberapa fragmen HTML (dedupe)."""
-    out, seen = [], set()
-    for frag in texts:
-        for tag in IMG_TAG_RE.finditer(frag):
-            u = _img_src_from_tag(tag.group(0))
-            if not u:
-                continue
-            u = H.unescape(u).split(' ')[0]
-            if u.startswith('//'):
-                u = 'https:' + u
-            elif u.startswith('/'):
-                u = urljoin(base_url, u)
-            if not u.startswith('http'):
-                continue
-            low = u.lower().split('?')[0].split('#')[0]
-            if not re.search(r'\.(jpe?g|png|webp|gif|avif)$', low):
-                continue
-            if 'wp-content/uploads' not in low and '/wp-content/' in low:
-                continue  # aset tema di luar uploads (logo/plugin)
-            if _is_asset_url(u):
-                continue
-            if u in seen:
-                continue
-            seen.add(u)
-            out.append(u)
-    return out
-
-
-def parse_chapter_images(html, base_url):
-    """Kumpulkan URL gambar halaman bab.
-
-    Prioritas:
-      1) container resmi (<div id="chimg-.."> / .chapter-image);
-      2) kalau kosong/tak ada, scan SEMUA <img> di halaman (mendukung
-         lazy-load data-src/srcset) agar gambar tetap didapat walau struktur
-         halaman beda — gambar tidak di-skip begitu saja.
-    """
-    m = CHIMG_RE.search(html) or CHIMG_CLASS_RE.search(html)
-    if m:
-        out = _collect_img_urls([m.group(1)], base_url)
-        if out:
-            return out
-        # container ada tapi kosong -> tetap coba scan seluruh halaman
-    return _collect_img_urls([html], base_url)
-
-
-def fill_chapter_images(chapters):
-    """Ambil gambar bab yang belum punya `images` (incremental + retry)."""
-    fetched = 0
-    consec = 0
-    pending = [c for c in chapters if c.get('external') and not c.get('images')]
-    tries = {id(c): 0 for c in pending}
-    while pending:
-        c = pending.pop(0)
-        if MAX_IMAGE_CHAPTERS and fetched >= MAX_IMAGE_CHAPTERS:
-            break
-        tries[id(c)] += 1
-        if tries[id(c)] > 2:
-            continue   # sudah 2x gagal, serahkan ke run berikutnya
+    t_all = time.time()
+    print('[scraper] %s | menjalankan %d adaptor sumber secara berurutan...'
+          % (ts(), len(adapters)))
+    for i, a in enumerate(adapters):
+        is_last = (i == len(adapters) - 1)
+        # Adaptor terakhir memakai mode env/auto; adaptor lain TIDAK build.
+        build_here = last_mode if is_last else False
         try:
-            html = fetch(c['external'])
-            imgs = parse_chapter_images(html, c['external'])
-            if imgs:
-                c['images'] = imgs
-                if not c.get('date'):
-                    c['date'] = extract_chapter_date(html)
-                fetched += 1
-                consec = 0
-            else:
-                # Halaman termuat tapi gambar tak ketemu -> JANGAN di-skip:
-                # coba lagi di akhir run ini; run berikutnya tetap mencoba lagi.
-                if tries[id(c)] < 2:
-                    pending.append(c)
-                else:
-                    c['images'] = []
-        except Exception as ex:
-            consec += 1
-            print('   ! gambar bab `%s` gagal: %s' % (c.get('slug'), ex))
-            consec = pause_on_failures(consec)
-            if not c.get('images') and tries[id(c)] < 2:
-                pending.append(c)   # coba sekali lagi di akhir sambil lalu
-        if MAX_IMAGE_CHAPTERS and fetched >= MAX_IMAGE_CHAPTERS:
-            break
-        polite_delay()
-    n = sum(1 for c in chapters if c.get('images'))
-    print('-> gambar terambil: %d/%d bab' % (n, len(chapters)))
-    return chapters
-
-
-def fill_chapter_dates(chapters):
-    """Isi `date` bab yang belum punya tanggal (incremental + retry)."""
-    fetched = 0
-    consec = 0
-    pending = [c for c in chapters if c.get('external') and not c.get('date')]
-    tries = {id(c): 0 for c in pending}
-    while pending:
-        c = pending.pop(0)
-        if MAX_CHAPTER_DATES and fetched >= MAX_CHAPTER_DATES:
-            break
-        tries[id(c)] += 1
-        if tries[id(c)] > 2:
-            continue   # sudah 2x gagal, serahkan ke run berikutnya
-        try:
-            d = extract_chapter_date(fetch(c['external']))
-            if d:
-                c['date'] = d
-                fetched += 1
-            consec = 0
-        except Exception as ex:
-            consec += 1
-            print('   ! tanggal bab `%s` gagal: %s' % (c.get('slug'), ex))
-            consec = pause_on_failures(consec)
-            if not c.get('date') and tries[id(c)] < 2:
-                pending.append(c)   # coba sekali lagi di akhir
-        if MAX_CHAPTER_DATES and fetched >= MAX_CHAPTER_DATES:
-            break
-        polite_delay()
-    n = sum(1 for c in chapters if c.get('date'))
-    print('-> tanggal bab terisi: %d/%d bab' % (n, len(chapters)))
-    return chapters
-
-
-# ---------------------------------------------------------------- scraping
-
-
-def scrape_series(entry, want_images, want_dates=False):
-    url = entry.get('url')
-    html = fetch(url)
-    # bila URL ternyata halaman bab, ikuti tautan "Daftar Chapter" ke halaman seri
-    su = find_series_url(html, url)
-    if su and su != url:
-        html = fetch(su)
-        url = su
-    mt = OG_IMG_RE.search(html)
-    mt_t = OG_T_RE.search(html) or TITLE_RE.search(html)
-    page_title = clean_title(mt_t.group(1)) if mt_t else ''
-    # Judul tebakan dari URL (mis. "one-piece" -> "One Piece") jangan dipakai
-    # bila halaman sumber memberi judul lebih lengkap ("One Piece: Ace Story" ->
-    # "One Piece Ace Story"). Judul eksplisit dari sources.json tetap menang.
-    if entry.get('title') and not entry.get('auto_title'):
-        title = clean_title(entry.get('title') or '')
-    else:
-        title = (page_title or clean_title(entry.get('title')
-                                           or entry.get('slug') or ''))
-    info = extract_series_info(html)
-    genres = extract_genres(html)
-    for g in (info.get('genres') or []):
-        if g not in genres:
-            genres.append(g)
-    chapters = parse_chapter_links(html, url)
-    if want_images:
-        chapters = fill_chapter_images(chapters)
-    elif want_dates:
-        chapters = fill_chapter_dates(chapters)
-    return {
-        'slug': slugify(entry.get('slug') or title),
-        'title': clean(title),
-        'desc': extract_desc(html),
-        'keywords': info.get('themes', ''),
-        'status': info.get('status', ''),
-        'type': info.get('type', ''),
-        'author': info.get('author', ''),
-        'illustrator': info.get('illustrator', ''),
-        'alt_title': info.get('alt_title', ''),
-        'genres': genres,
-        'cover_url': mt.group(1) if mt else '',
-        'last_updated': extract_last_updated(html),
-        'chapters': chapters,
-    }
-
-
-def make_series_id(length=6):
-    """Id pendek acak per seri (a-z0-9). Dipakai sebagai prefix slug bab."""
-    return ''.join(random.choices('abcdefghijklmnopqrstuvwxyz0123456789',
-                                  k=length))
-
-
-def prefix_slug(series_id, slug):
-    """Prefix slug bab dengan id seri: 'ab12cd-chapter-414'.
-    Dengan begitu bab dari seri berbeda TIDAK saling menimpa folder/URL
-    (mis. 'Chapter 10' milik Eleceed vs One Piece tetap terpisah)."""
-    slug = (slug or 'chapter').strip('-')
-    p = (series_id or '') + '-'
-    if p == '-':
-        return slug
-    return slug if slug.startswith(p) else p + slug
-
-
-def write_series(slug, data):
-    """Tulis site-content/series/<slug>.json; pertahankan data lama (desc,
-    gambar bab yang sudah direkam) agar tidak terhapus saat di-rewrite."""
-    path = os.path.join(SERIES_DIR, slug + '.json')
-    prev = load_json_file(path) or {}
-    # Id acak per seri: dibuat sekali, dipakai ulang di run berikutnya.
-    series_id = (prev.get('id') or '').strip() or make_series_id()
-    old = {c.get('external'): c for c in (prev.get('chapters') or [])
-           if c.get('external')}
-    merged_ch, seen = [], set()
-    for c in data.get('chapters') or []:
-        ext = c.get('external') or ''
-        if ext:
-            if ext in seen:
-                continue
-            seen.add(ext)
-            oc = old.get(ext)
-            if oc and not c.get('images') and oc.get('images'):
-                c['images'] = oc['images']   # jaga gambar lama (incremental)
-            if oc and not c.get('date') and oc.get('date'):
-                c['date'] = oc['date']        # jaga tanggal bab lama
-        merged_ch.append(c)
-    # pertahankan bab yang sudah ada tapi tak muncul di scrape terbaru
-    for c in prev.get('chapters') or []:
-        ext = c.get('external') or ''
-        if ext and ext not in seen:
-            seen.add(ext)
-            merged_ch.append(c)
-    # slump bab dibedakan per seri: prefix dengan id seri biar tidak campur aduk.
-    for c in merged_ch:
-        c['slug'] = prefix_slug(series_id, c.get('slug', ''))
-    merged = {
-        'id': series_id,
-        'slug': slug,
-        'title': data.get('title') or prev.get('title') or slug,
-        'desc': data.get('desc') or prev.get('desc') or '',
-        'keywords': data.get('keywords') or prev.get('keywords') or '',
-        'status': data.get('status') or prev.get('status') or '',
-        'type': data.get('type') or prev.get('type') or '',
-        'author': data.get('author') or prev.get('author') or '',
-        'illustrator': data.get('illustrator') or prev.get('illustrator') or '',
-        'alt_title': data.get('alt_title') or prev.get('alt_title') or '',
-        'genres': data.get('genres') or prev.get('genres') or [],
-        'cover_url': data.get('cover_url') or prev.get('cover_url') or '',
-        'last_updated': data.get('last_updated') or prev.get('last_updated') or '',
-        'chapters': merged_ch,
-    }
-    os.makedirs(SERIES_DIR, exist_ok=True)
-    with open(path, 'w', encoding='utf-8') as fh:
-        json.dump(merged, fh, ensure_ascii=False, indent=2)
-    return len(merged_ch)
-
-
-# ---------------------------------------------------------------- halaman daftar / listing
-
-
-# Path direktori berisi daftar banyak manga (mis. /komik/, /komik/page/2/).
-LISTING_PATH_RE = re.compile(
-    r'/((?:komik|komikindo|manga|manhwa|series|daftar-komik|manga-list)'
-    r'(?:/page/\d+)?/?)$', re.I)
-
-
-def is_listing_url(url):
-    """Benar bila URL menunjuk ke halaman direktori (daftar manga), bukan ke satu
-    halaman seri. Contoh: https://komikindo.ch/komik/ -> True."""
-    if not url:
-        return False
-    return bool(LISTING_PATH_RE.search(url.rstrip('/')))
-
-
-def parse_list_links(html, base_url):
-    """Ekstrak link ke halaman seri dari halaman direktori.
-    Bentuk: .../komik/<slug>/ ; mengabaikan link pagination (/komik/page/N/)."""
-    out, seen = [], set()
-    for m in re.finditer(r'<a\b[^>]*href="([^"]+)"', html):
-        href = urljoin(base_url, m.group(1))
-        mm = re.search(r'/(?:komik|manga|series)/([^/.]+?)/?$', href)
-        if not mm:
-            continue
-        seg = mm.group(1)
-        if seg == 'page':
-            continue  # pagination /komik/page/N/
-        if href in seen:
-            continue
-        seen.add(href)
-        slug = seg
-        sx = re.match(r'^(\d+)-(.+)$', slug)
-        if sx:
-            slug = sx.group(2)          # 846048-eleceed -> eleceed
-        if not slug or slug in ('page',):
-            continue
-        title = clean_title(' '.join(w.capitalize() for w in slug.split('-')))
-        out.append({'url': href, 'slug': slug, 'title': title,
-                    'auto_title': True})
-    return out
-
-
-def expand_seed(entry, want_images):
-    """Kalau entry berupa halaman daftar, scan & kembalikan daftar manga-nya;
-    selain itu kembalikan entry itu sendiri (halaman seri)."""
-    url = entry.get('url') or ''
-    if not is_listing_url(url) and not entry.get('listing', False):
-        return [entry]
-    try:
-        html = fetch(url)
-    except Exception as ex:
-        print('   ! gagal scan halaman daftar %s: %s' % (url, ex))
-        return [entry]
-    links = parse_list_links(html, url)
-    if not links:
-        print('   ! tidak ada link manga di %s (diproses sebagai halaman seri).' % url)
-        return [entry]
-    print('   -> halaman daftar: %d manga ditemukan di %s' % (len(links), url))
-    return links
-
-
-def run():
-    want_images = ('--images' in sys.argv
-                   or os.environ.get('SCRAPE_IMAGES', '').strip()
-                   not in ('', '0'))
-    want_dates = (not want_images
-                  and ('--dates' in sys.argv
-                       or os.environ.get('SCRAPE_DATES', '').strip()
-                       not in ('', '0')))
-    entries = []
-    src_data = load_json_file(SRC)
-    if src_data is not None:
-        entries += src_data
-    manual_txt = os.path.join(ROOT, 'site-content', 'manual-batch.txt')
-    if os.path.exists(manual_txt):
-        with open(manual_txt, encoding='utf-8-sig') as fh:
-            for line in fh:
-                url = line.strip()
-                if url.startswith('\ufeff'):
-                    url = url[1:].strip()
-                if not url or not url.startswith('http'):
-                    continue
-                # Lewati URL tanpa path (mis. homepage "https://site.com/").
-                if not re.search(r'https?://[^/]+/[^/]+', url):
-                    print('   ! lewati URL tanpa path (bukan halaman seri/daftar): %s' % url)
-                    continue
-                seg = [s for s in url.rstrip('/').split('/') if s]
-                hint = seg[-1] if seg else 'manga'
-                mm = re.match(r'^(\d+)-([a-z0-9]+(?:-[a-z0-9]+)*)$', hint)
-                if mm:
-                    hint = mm.group(2)      # mis. 846048-eleceed -> eleceed
-                title = clean_title(' '.join(x.capitalize() for x in hint.split('-')))
-                entries.append({'url': url, 'slug': hint, 'title': title,
-                                'listing': is_listing_url(url),
-                                'auto_title': True})
-    if not entries:
-        print('Tidak ada sumber (sources.json kosong & tanpa URL manual).')
-        print('Isi sources.json, atau tempel URL halaman seri / halaman daftar '
-              'lewat form Action.')
-        return 0
-
-    # Expand halaman daftar -> daftar manga (scan sesuai batch nanti).
-    expanded = []
-    for e in entries:
-        sub = expand_seed(e, want_images)
-        for s in sub:
-            if s['url'] not in [x.get('url') for x in expanded]:
-                expanded.append(s)
-    entries = expanded
-
-    limit = None
-    b = os.environ.get('BATCH_LIMIT', '')
-    if b.isdigit():
-        limit = int(b)
-    if limit:
-        entries = entries[:limit]
-    if not entries:
-        print('Tidak ada manga untuk diproses setelah scan.')
-        return 0
-
-    total_ch = 0
-    mode = ('gambar' if want_images else
-            'tanggal' if want_dates else 'link')
-    for i, e in enumerate(entries, 1):
-        print('[%d/%d] %s' % (i, len(entries), e.get('url')))
-        try:
-            m = scrape_series(e, want_images=want_images,
-                             want_dates=want_dates)
-        except Exception as ex:
-            print('   ! gagal: %s' % ex)
-            polite_delay()
-            continue
-        slug = slugify(m['slug'])
-        n = write_series(slug, m)
-        total_ch += n
-        print('   -> seri %s, %d bab (mode %s)' % (slug, n, mode))
-        polite_delay()
-    print('selesai (mode %s): %d seri diproses, %d bab ditulis ke '
-          'site-content/series/' % (mode, len(entries), total_ch))
+            rc = run(a, auto_build=build_here)
+        except KeyboardInterrupt:
+            print('\n[scraper] dibatalkan pengguna (Ctrl-C).')
+            return 130
+        if rc:
+            print('  [scraper] adaptor %s keluar dengan kode %s.' % (a.name, rc))
+    _summarize(adapters, t_all)
     return 0
 
 
-def test():
-    html = ('<a href="/genre/action">Action</a>'
-            '<a href="/e-chapter-1/">Eleceed Chapter 1</a>'
-            '<a href="/e-chapter-2/">Eleceed Chapter 2</a>'
-            '<a href="/x">About</a>')
-    print(json.dumps(parse_chapter_links(html, 'https://ac/manga/eleceed/'),
-                     ensure_ascii=False, indent=2))
-    ich = ('<div class="chapter-image"><div id="chimg-auh">'
-           '<img src="https://cdn.example/p1.jpg">'
-           '<img src="https://cdn.example/fav.png"></div></div>')
-    print(json.dumps(parse_chapter_images(ich, 'https://ac/manga/'), indent=2))
-
-
 if __name__ == '__main__':
-    if '--test' in sys.argv:
-        test()
-    else:
-        sys.exit(run())
+    sys.exit(main())
