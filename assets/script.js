@@ -11,6 +11,33 @@
   else if (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches) apply(true);
   if (btn) btn.addEventListener('click', function(){ apply(!root.classList.contains('light')); });
 
+  // ---- tombol Blur: tampilkan/sembunyikan seri sumber dewasa ----
+  // ON  -> seri Mikoroku & Doujindesu ikut ditampilkan
+  // OFF -> kedua sumber disembunyikan (default).
+  // Pencarian global & cari bab ikut menyaring lewat event 'blur-change'.
+  var blurBtn = document.getElementById('blur-btn');
+  var blurOn = false;
+  try { blurOn = localStorage.getItem('mfmam-blur') === '1'; } catch(e){}
+  function applyBlur(on){
+    blurOn = !!on;
+    document.body.classList.toggle('blur-on', blurOn);
+    if (blurBtn){
+      blurBtn.textContent = blurOn ? 'Blur: Nyala' : 'Blur: Mati';
+      blurBtn.classList.toggle('on', blurOn);
+      blurBtn.setAttribute('aria-pressed', blurOn ? 'true' : 'false');
+      blurBtn.title = blurOn
+        ? 'Sembunyikan seri dari Mikoroku & Doujindesu'
+        : 'Tampilkan seri dari Mikoroku & Doujindesu';
+    }
+    try { localStorage.setItem('mfmam-blur', blurOn ? '1' : '0'); } catch(e){}
+    window.dispatchEvent(new Event('blur-change'));
+  }
+  if (blurBtn) blurBtn.addEventListener('click', function(){ applyBlur(!blurOn); });
+  [].slice.call(document.querySelectorAll('[data-blur-enable]')).forEach(function(b){
+    b.addEventListener('click', function(){ applyBlur(true); });
+  });
+  applyBlur(blurOn);
+
   var nt = document.getElementById('nav-toggle'), mn = document.getElementById('main-nav');
   if (nt && mn) nt.addEventListener('click', function(){ mn.classList.toggle('open'); });
 
@@ -36,11 +63,12 @@
     fetch('/search.json').then(function(r){ return r.json(); }).then(function(d){ index = d; }).catch(function(){});
     sb.addEventListener('click', function(){ md.hidden = false; setTimeout(function(){ if (inp) inp.focus(); }, 30); });
     md.addEventListener('click', function(e){ if (e.target === md) md.hidden = true; });
-    inp.addEventListener('input', function(){
+    function renderGlobalSearch(){
       var q = inp.value.trim().toLowerCase();
       res.innerHTML = '';
       if (q.length < 2) return;
       var out = index.filter(function(d){
+        if (d.b && !blurOn) return false; // seri dewasa disembunyikan saat Blur mati
         return d.t.toLowerCase().indexOf(q) !== -1 ||
                (d.g || []).some(function(g){ return g.toLowerCase().indexOf(q) !== -1; });
       });
@@ -53,7 +81,9 @@
         res.appendChild(a);
       });
       if (!out.length){ var e = document.createElement('div'); e.className = 'sr'; e.textContent = 'Tidak ditemukan.'; res.appendChild(e); }
-    });
+    }
+    inp.addEventListener('input', renderGlobalSearch);
+    window.addEventListener('blur-change', renderGlobalSearch);
   }
 
   // cari bab: temukan bab yang ingin dibaca
@@ -137,6 +167,7 @@
         crx.innerHTML = '';
         if (!tokens.length){ crx.hidden = true; return; }
         var res = chapterIndex.filter(function(d){
+          if (d.b && !blurOn) return false; // seri dewasa disembunyikan saat Blur mati
           return tokens.every(function(t){ return tokenHit(t, d); });
         });
         res.sort(function(a, b){
@@ -171,6 +202,7 @@
       }
       cfx.addEventListener('submit', function(e){ e.preventDefault(); renderChap(cix.value); });
       cix.addEventListener('input', function(){ renderChap(cix.value); });
+      window.addEventListener('blur-change', function(){ renderChap(cix.value); });
     }
   }
 
