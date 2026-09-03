@@ -425,6 +425,13 @@ def chapter_index(series_list):
             out.append({'s': st, 't': t, 'n': fmt_num(num),
                         'u': reader_url(slug, c)})
     return out
+def genre_cloud_html(items):
+    """Awan chip semua genre (indeks Genre) lengkap dengan jumlah judul."""
+    return '<div class="chips genre-cloud">%s</div>' % ' '.join(
+        '<a class="chip" href="/genre/%s/">%s<span class="gcount">%d</span></a>'
+        % (esc(slug), esc(g), n) for slug, g, n in items)
+
+
 def build():
     settings = load_json(os.path.join(CONTENT, 'settings.json'),
                          {'site_name': 'Mfmam', 'tagline': 'Baca Komik Manhwa'})
@@ -532,6 +539,58 @@ def build():
             write('daftar-komik/page/%d/index.html' % i,
                   render_page('Daftar Manhwa - Halaman %d - %s' % (i, site),
                               body, site, tagline))
+    # --- halaman genre: indeks semua genre + listing tiap genre (paginasi) ---
+    # Urut seri sama dengan beranda (update terbaru dulu) karena `series`
+    # sudah di-sort; setiap seri bisa muncul di beberapa genre.
+    genre_map = {}
+    for s in series:
+        for g0 in (s.get('genres') or []):
+            g = (g0 or '').strip()
+            if g:
+                genre_map.setdefault(g, []).append(s)
+    # (slug, nama-asli, jumlah seri); urut abjad nama genre.
+    genre_items = sorted(((slugify(g), g, len(genre_map[g]))
+                          for g in genre_map), key=lambda x: x[1].lower())
+    genre_sitemap = []
+    for slug_, g, n in genre_items:
+        g_pages = chunk_pages(genre_map[g]) or [[]]
+        gn = len(g_pages)
+        for i, items in enumerate(g_pages, 1):
+            pg = sun_grid(items) if items else '<p class="empty">Belum ada seri.</p>'
+            body_g = ('<div class="pagi-head"><a class="crumb" href="/genre/">'
+                      '&#8592; Semua Genre</a>'
+                      '<h1 class="page-title">Genre %s</h1></div>'
+                      '<p class="count-line">%d judul dengan genre %s.</p>'
+                      '<div class="manga-grid">%s</div>'
+                      % (esc(g), len(genre_map[g]), esc(g), pg))
+            body_g += pagination_html(i, gn, base_path='/genre/' + slug_)
+            title_g = ('%s - Genre - Halaman %d - %s' % (g, i, site)
+                       if i > 1 else '%s - Genre - %s' % (g, site))
+            if i == 1:
+                write('genre/%s/index.html' % slug_,
+                      render_page(title_g, body_g, site, tagline))
+                genre_sitemap.append(' <url><loc>%s/genre/%s/</loc></url>'
+                                     % (SITE_URL, slug_))
+            else:
+                write('genre/%s/page/%d/index.html' % (slug_, i),
+                      render_page(title_g, body_g, site, tagline))
+                genre_sitemap.append(
+                    ' <url><loc>%s/genre/%s/page/%d/</loc></url>'
+                    % (SITE_URL, slug_, i))
+    # Indeks semua genre (awan chip).
+    if genre_items:
+        body_genre = ('<div class="pagi-head"><a class="crumb" href="/">'
+                      '&#8592; Beranda</a>'
+                      '<h1 class="page-title">Genre</h1></div>'
+                      '<p class="count-line">%d genre &middot; %d judul.</p>'
+                      '%s' % (len(genre_items), total,
+                              genre_cloud_html(genre_items)))
+    else:
+        body_genre = ('<h1 class="page-title">Genre</h1>'
+                      '<p class="empty">Belum ada genre.</p>')
+    write('genre/index.html',
+          render_page('Genre - %s' % site, body_genre, site, tagline))
+
     write('chapters-index.json',
           json.dumps(chapter_index(series), ensure_ascii=False))
 
@@ -551,6 +610,9 @@ def build():
                        'g': s.get('genres') or []})
         sitemap.append(' <url><loc>%s/manga/%s/</loc></url>'
                        % (SITE_URL, esc(s.get('slug'))))
+
+    sitemap.append(' <url><loc>%s/genre/</loc></url>' % SITE_URL)
+    sitemap.extend(genre_sitemap)
 
     # Halaman info (mis. kontak)
     for p in pages:

@@ -104,31 +104,28 @@ jobs:
           echo "Ukuran dist: $(du -sh dist | cut -f1)"
           echo "File data R2: $(find dist-data -type f | wc -l)"
 
-      - name: Upload data katalog ke R2 (dist-data/ -> bucket mfmam-data)
+      - name: Upload data katalog ke R2 (hanya yang berubah)
+        id: upload
         run: |
           if [ -z "$CLOUDFLARE_API_TOKEN" ] || [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
             echo "::error::CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID belum di-set."
             exit 1
           fi
-          # Setiap file dist-data/data/<slug>.json -> key data/<slug>.json.
-          # Loop disengaja (bukan parallelism) agar stabil & mudah dibaca log.
-          total=$(find dist-data/data -name '*.json' | wc -l)
-          i=0
-          for f in dist-data/data/*.json; do
-            i=$((i+1))
-            key=$(basename "$f")
-            npx wrangler@4 r2 object put "mfmam-data/data/$key" \
-              --file "$f" --remote --content-type application/json >/dev/null 2>&1 \
-              || { echo "::error::Gagal upload $key"; exit 1; }
-            if [ $((i % 50)) -eq 0 ] || [ "$i" -eq "$total" ]; then
-              echo "Upload R2: $i/$total"
-            fi
-          done
+          # _upload_r2.py membandingkan MD5 tiap file dist-data/data/<slug>.json
+          # dengan state riwayat yang disimpan DI R2 (key .r2-state.json);
+          # operasi R2 object put hanya dijalankan untuk file BARU atau BERUBAH
+          # (bukan seluruh katalog), sehingga proses jauh lebih cepat.
+          python _upload_r2.py > r2up.txt
+          cat r2up.txt
+          CHANGED=$(grep -o 'CHANGED:[0-9]*' r2up.txt | head -1 | cut -d: -f2)
+          echo "changed=${CHANGED:-0}" >> "$GITHUB_OUTPUT"
         env:
+          WRANGLER_CMD: "npx wrangler@4"
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
-      - name: Deploy ke Cloudflare Pages
+      - name: Deploy ke Cloudflare Pages (skip bila tanpa perubahan)
+        if: steps.upload.outputs.changed != '0'
         id: deploy
         run: |
           if [ -z "$CLOUDFLARE_API_TOKEN" ] || [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
