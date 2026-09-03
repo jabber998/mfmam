@@ -1,16 +1,14 @@
-name: Update Bab Otomatis (seri existing saja)
+name: Update Doujindesu (tiap 2 hari, 03:00 WIB)
 
 on:
   schedule:
-    # UTC; 03:35 & 09:35 & 15:35 & 21:35 UTC (tiap 6 jam).
-    # MODE SMART-UPDATE: scan halaman daftar "terbaru" sumber (mis. komik-terbaru),
-    # lalu HANYA memperbarui seri yang SUDAH ADA di katalog. TIDAK menambah seri
-    # baru, TIDAK scan semua seri satu-satu.
-    - cron: "35 3,9,15,21 * * *"
+    # WIB = UTC+7. 03:00 WIB = 20:00 UTC (hari sebelumnya), tiap 2 hari;
+    # ambil bab 2 hari terakhir.
+    - cron: "0 20 */2 * *"
   workflow_dispatch:
 
 concurrency:
-  group: update-existing
+  group: update-doujindesu
   cancel-in-progress: false
 
 jobs:
@@ -19,13 +17,9 @@ jobs:
     permissions:
       contents: read
     env:
-      # Domain situs live Cloudflare Pages. Wajib diset di vars bila
-      # bukan mfmam.pages.dev.
       SITE_URL: ${{ vars.SITE_URL || 'https://mfmam.pages.dev' }}
-      # Kredensial Cloudflare: set di Settings -> Secrets:
-      #   CLOUDFLARE_API_TOKEN (token dengan izin Pages:Edit + R2:Edit) dan
-      #   CLOUDFLARE_ACCOUNT_ID.
       SCRAPE_IMAGES: "1"
+      SCRAPE_FRESH_HOURS: "48"
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -39,22 +33,20 @@ jobs:
         run: |
           python _restore_data.py || true
 
-      - name: Update seri terbaru (scan daftar, hanya yang update)
+      - name: Update bab Doujindesu (2 hari terakhir)
         env:
-          SCRAPE_SMART_UPDATE: "1"
+          # Update-only: scrape ulang seri doujindesu yang SUDAH ada di
+          # katalog via API (tidak butuh halaman daftar / sources.json).
+          SCRAPE_UPDATE_ONLY: "1"
           SCRAPE_AUTO_BUILD: "0"
-          # Ambil 1-2 halaman daftar terbaru saja (tidak semua seri).
-          SCRAPE_MAX_PAGES: "2"
-          # Tidak perlu batas batch — daftar terbaru biasanya < 50 seri.
           BATCH_LIMIT: ""
         run: |
-          python scraper.py
+          python scraper_doujindesu.py
 
       - name: Build situs statis (dist/)
         run: |
           python build.py
           echo "File di dist: $(find dist -type f | wc -l)"
-          echo "Ukuran dist: $(du -sh dist | cut -f1)"
           echo "File data R2: $(find dist-data -type f | wc -l)"
 
       - name: Upload data katalog ke R2 (hanya yang berubah)
@@ -64,8 +56,6 @@ jobs:
             echo "::error::CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID belum di-set."
             exit 1
           fi
-          # _upload_r2.py membandingkan MD5 dengan state yang disimpan DI R2
-          # (key .r2-state.json); hanya file yang berubah yang di-upload.
           python _upload_r2.py > r2up.txt
           cat r2up.txt
           CHANGED=$(grep -o 'CHANGED:[0-9]*' r2up.txt | head -1 | cut -d: -f2)
@@ -75,16 +65,12 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
-      - name: Deploy ke Cloudflare Pages (skip bila tanpa perubahan)
-        if: steps.upload.outputs.changed != '0'
-        id: deploy
+      - name: Deploy ke Cloudflare Pages
         run: |
           if [ -z "$CLOUDFLARE_API_TOKEN" ] || [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
             echo "::error::CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID belum di-set."
             exit 1
           fi
-          # TANPA --branch: setiap deploy langsung masuk PRODUCTION
-          # (mfmam.pages.dev).
           npx wrangler@4 pages deploy dist \
             --project-name=${{ vars.PAGES_PROJECT || 'mfmam' }}
         env:

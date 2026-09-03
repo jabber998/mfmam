@@ -28,6 +28,7 @@ from scraper_common import (
     clean_title, chapter_label, chapter_images_ok, _parallel_for,
     _is_asset_url, series_slug_from_url, resolve_canonical_slug,
     merge_existing_chapter_data, extract_chapter_date, extract_last_updated,
+    fresh_cutoff, chapter_within_window,
 )
 
 ANCHOR_RE = re.compile(r'<a\b[^>]*href=["\']([^"\']+)["\'][^>]*>(.*?)</a>',
@@ -270,8 +271,17 @@ def fill_chapter_images(chapters):
     PARALEL. Setelah itu `date` bab yang kosong diisi via fill_chapter_dates."""
     t0 = time.time()
     consec = 0
+    cutoff = fresh_cutoff()
     pending = [c for c in chapters
-               if c.get('external') and not chapter_images_ok(c)]
+               if c.get('external') and not chapter_images_ok(c)
+               and chapter_within_window(c, cutoff)]
+    if cutoff:
+        old = [c for c in chapters
+               if c.get('external') and not chapter_images_ok(c)
+               and not chapter_within_window(c, cutoff)]
+        if old:
+            print('  [gambar] jendela segar %s: %d bab lama dilewati'
+                  % (cutoff, len(old)))
     tries = {id(c): 0 for c in pending}
     n_skip = len(chapters) - len(pending)
     if n_skip:
@@ -370,7 +380,17 @@ def fill_chapter_dates(chapters):
     Otomatis paralel bila bab yang perlu diisi > PARALLEL_MIN_CHAPTERS."""
     t0 = time.time()
     consec = 0
-    pending = [c for c in chapters if c.get('external') and not c.get('date')]
+    cutoff = fresh_cutoff()
+    pending = [c for c in chapters
+               if c.get('external') and not c.get('date')
+               and chapter_within_window(c, cutoff)]
+    if cutoff:
+        old = [c for c in chapters
+               if c.get('external') and not c.get('date')
+               and not chapter_within_window(c, cutoff)]
+        if old:
+            print('  [tanggal] jendela segar %s: %d bab lama dilewati'
+                  % (cutoff, len(old)))
     tries = {id(c): 0 for c in pending}
     n_skip = len(chapters) - len(pending)
     if n_skip:

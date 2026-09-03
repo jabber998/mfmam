@@ -283,6 +283,43 @@ def pause_on_failures(consecutive):
     return consecutive
 
 
+def fresh_cutoff():
+    """Batas tanggal bab yang masih 'segar' dari env SCRAPE_FRESH_HOURS (jam).
+
+    Kembalikan string 'YYYY-MM-DD' atau '' (tanpa batas). Dipakai untuk
+    membatasi bab yang diproses (gambar/tanggal) hanya yang ber-`date` dalam
+    N jam terakhir, mis. jadwal update per-sumber:
+      komikindo 2x/hari   -> SCRAPE_FRESH_HOURS=12 (6 jam... 12 jam terakhir)
+      mikoroku 3 hari sekali -> SCRAPE_FRESH_HOURS=72
+      doujindesu 2 hari sekali -> SCRAPE_FRESH_HOURS=48
+    Bab TANPA tanggal tetap dianggap segar (belum tahu kapan rilisnya; bisa
+    jadi bab baru), jadi tidak pernah terlewat hanya karena date kosong."""
+    raw = os.environ.get('SCRAPE_FRESH_HOURS', '').strip()
+    try:
+        hours = float(raw)
+    except (TypeError, ValueError):
+        return ''
+    if hours <= 0:
+        return ''
+    days = hours / 24.0
+    return time.strftime('%Y-%m-%d',
+                         time.gmtime(time.time() - days * 86400.0))
+
+
+def chapter_within_window(c, cutoff):
+    """Benar bila bab `c` masih dalam jendela waktu `cutoff` ('YYYY-MM-DD').
+
+    cutoff kosong = tanpa batas waktu (semua bab diproses). Bab tanpa `date`
+    dianggap layak diproses supaya bab baru yang belum tercatat tanggalnya
+    tidak terlewat."""
+    if not cutoff:
+        return True
+    d = (c.get('date') or '').strip()
+    if not d:
+        return True
+    return d[:10] >= cutoff
+
+
 def load_json_file(path):
     """Baca JSON toleran BOM (utf-8-sig). BOM sering muncul dari editor Windows."""
     try:
@@ -1698,7 +1735,9 @@ def run(adapter, auto_build=None):
     # Prioritas URL lanjutan: 1) env SCRAPE_NEXT_URL, 2) resume otomatis dari
     # state (bila run sebelumnya sudah pernah mengisi halaman), 3) prompt.
     # Mode --seed-sitemap mematikan pagination (sitemap sudah berisi semua seri).
-    skip_paging = seed_sitemap or smart_update
+    # Mode update-only cuma berisi halaman seri (bukan daftar), jadi tak ada
+    # pagination yang relevan — matikan supaya resume/prompt tidak terpicu.
+    skip_paging = seed_sitemap or smart_update or update_only
     cont_url = ('' if skip_paging
                 else os.environ.get('SCRAPE_NEXT_URL', '' .strip()))
     pages_done = set()

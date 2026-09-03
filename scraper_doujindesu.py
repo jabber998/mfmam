@@ -27,6 +27,7 @@ from scraper_common import (
     UA, _SSL_CTX,
     SourceAdapter, register_adapter,
     clean_title, slugify, secs, chapter_label, polite_delay, logv,
+    fresh_cutoff, chapter_within_window,
 )
 DOUJIN_WEB = 'https://doujin.desu.xxx'
 DOUJIN_API_BASE = DOUJIN_WEB + '/api'
@@ -149,11 +150,19 @@ def _doujin_fill_images(chapters):
     """Isi URL gambar bab lewat API /api/chapters/<id>; nilai incremental:
     bab yang sudah punya `images` dilewati. URL gambar bertanda tangan dan
     basi ~24 jam, jadi bab yang gambarnya kedaluwarsa tetap di-fetch ulang."""
+    cutoff = fresh_cutoff()
     pending = []
     for c in chapters:
         ext = c.get('external') or ''
-        if ext and not c.get('images'):
+        if ext and not c.get('images') and chapter_within_window(c, cutoff):
             pending.append(c)
+    if cutoff:
+        old = [c for c in chapters
+               if (c.get('external') or '') and not c.get('images')
+               and not chapter_within_window(c, cutoff)]
+        if old:
+            print('  [gambar] jendela segar %s: %d bab lama dilewati'
+                  % (cutoff, len(old)))
     if not pending:
         return chapters
     t0 = time.time()
