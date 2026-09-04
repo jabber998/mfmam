@@ -76,12 +76,10 @@ jobs:
         run: |
           python _restore_data.py || true
 
-      # Siapkan pilihan sumber. Bila salah satu ceklis dicentang, susun
+      # Siapkan pilihan sumber. Bila ceklis dicentang, susun
       # manual-batch.txt (URL sumber terpilih) dan batasi adaptor lewat
-      # SCRAPE_ADAPTERS. Bila semua kosong -> manual-batch tidak dibuat,
+      # SCRAPE_ADAPTERS. Bila kosong -> manual-batch tidak dibuat,
       # scraper memakai sources.json penuh (perilaku lama).
-      # Dijalankan SETELAH restore karena doujindesu butuh daftar slug dari
-      # katalog hasil restore (site-content/series/).
       - name: Siapkan pilihan sumber (hanya URL terpilih)
         id: pick
         if: github.event_name == 'workflow_dispatch'
