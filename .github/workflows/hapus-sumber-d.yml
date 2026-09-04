@@ -1,0 +1,110 @@
+name: Hapus Seri Sumber D (Doujindesu & Mikoroku)
+
+# Menghapus SEMUA seri yang berasal dari sumber konten D (Doujindesu &
+# Mikoroku) dari katalog, blob R2, dan situs. Jalankan MANUAL dari tab Actions.
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "DRY-RUN: hanya tampilkan daftar seri yang akan dihapus (TANPA menghapus / deploy)."
+        required: false
+        type: boolean
+        default: false
+
+concurrency:
+  group: hapus-sumber-d
+  cancel-in-progress: false
+
+jobs:
+  hapus-build-deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      SITE_URL: ${{ vars.SITE_URL || 'https://mfmam.pages.dev' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # Restore SEMUA seri dari situs live / R2 (termasuk sumber D),
+      # supaya penghapusan ini mencakup data yang benar-benar sedang live.
+      - name: Restore data katalog dari situs live
+        run: |
+          python _restore_data.py || true
+
+      - name: Hapus seri Doujindesu & Mikoroku (dari site-content/series/)
+        id: hapus
+        env:
+          DRY: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || 'false' }}
+        run: |
+          if [ "$DRY" = "true" ]; then
+            python _hapus_sumber_d.py --dry-run
+            echo "DRY-RUN aktif; tidak menghapus / deploy."
+            exit 0
+          fi
+          python _hapus_sumber_d.py
+          echo "R2 slugs terhapus (bila ada):"
+          cat _hapus-r2-slugs.txt 2>/dev/null || echo "(tidak ada)"
+          N=$(wc -l < _hapus-r2-slugs.txt 2>/dev/null || echo 0)
+          echo "hapused=${N}" >> "$GITHUB_OUTPUT"
+
+      - name: Hapus blob R2 untuk seri yang dihapus (agar tidak direstore lagi)
+        if: github.event_name == 'workflow_dispatch' && !inputs.dry_run && steps.hapus.outputs.hapused != '0'
+        env:
+          WRANGLER_CMD: "npx wrangler@4"
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          if [ -z "$CLOUDFLARE_API_TOKEN" ] || [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
+            echo "::warning::CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID belum di-set; blok R2 tidak dihapus."
+            exit 0
+          fi
+          while IFS= read -r slug; do
+            [ -z "$slug" ] && continue
+            echo "Hapus R2: data/$slug.json"
+            npx wrangler@4 r2 object delete mfmam-data/data/$slug.json --remote \
+              || echo "  (gagal/absen: data/$slug.json)"
+          done < _hapus-r2-slugs.txt
+
+      - name: Build situs statis (dist/)
+        if: github.event_name == 'workflow_dispatch' && !inputs.dry_run
+        run: |
+          python build.py
+          echo "File di dist: $(find dist -type f | wc -l)"
+          echo "File data R2: $(find dist-data -type f | wc -l)"
+
+      - name: Upload data katalog ke R2 (hanya yang berubah)
+        if: github.event_name == 'workflow_dispatch' && !inputs.dry_run
+        id: upload
+        run: |
+          if [ -z "$CLOUDFLARE_API_TOKEN" ] || [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
+            echo "::error::CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID belum di-set."
+            exit 1
+          fi
+          python _upload_r2.py > r2up.txt
+          cat r2up.txt
+          CHANGED=$(grep -o 'CHANGED:[0-9]*' r2up.txt | head -1 | cut -d: -f2)
+          echo "changed=${CHANGED:-0}" >> "$GITHUB_OUTPUT"
+        env:
+          WRANGLER_CMD: "npx wrangler@4"
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Deploy ke Cloudflare Pages
+        if: github.event_name == 'workflow_dispatch' && !inputs.dry_run
+        run: |
+          if [ -z "$CLOUDFLARE_API_TOKEN" ] || [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
+            echo "::error::CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID belum di-set."
+            exit 1
+          fi
+          npx wrangler@4 pages deploy dist \
+            --project-name=${{ vars.PAGES_PROJECT || 'mfmam' }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

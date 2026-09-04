@@ -215,7 +215,7 @@ margin:0 auto;border-radius:0;background:#000}
   .reader .reader-content, .reader-images{margin-left:-16px;margin-right:-16px}
   .reader-images img{max-width:none}
 }
-/* ---- filter Blur: seri Mikoroku & Doujindesu ---- */
+/* ---- filter Blur: konten D (sumber + genre 18+) ---- */
 .actions button{white-space:nowrap}
 .actions button:hover{border-color:var(--accent)}
 .actions button.on{background:var(--accent);border-color:var(--accent);color:#fff}
@@ -224,7 +224,7 @@ margin:0 auto;border-radius:0;background:#000}
 .manga-card[data-blur]{display:none}
 body.blur-on .manga-card[data-blur]{display:block}
 
-/* Halaman seri dewasa: konten disembunyikan; catatan + tombol "Nyalakan Blur" */
+/* Halaman seri D: konten disembunyikan; catatan + tombol "Nyalakan Blur" */
 .seri-page[data-blur]{display:none}
 body.blur-on .seri-page[data-blur]{display:block}
 .blur-note{display:none;max-width:520px;margin:40px auto 0;background:var(--card);

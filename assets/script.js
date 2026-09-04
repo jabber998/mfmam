@@ -11,9 +11,9 @@
   else if (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches) apply(true);
   if (btn) btn.addEventListener('click', function(){ apply(!root.classList.contains('light')); });
 
-  // ---- tombol Blur: tampilkan/sembunyikan seri sumber dewasa ----
-  // ON  -> seri Mikoroku & Doujindesu ikut ditampilkan
-  // OFF -> kedua sumber disembunyikan (default).
+  // ---- tombol Blur: tampilkan/sembunyikan konten D ----
+  // ON  -> seri D ikut ditampilkan (Mikoroku, Doujindesu, genre 18+)
+  // OFF -> seri D disembunyikan (default).
   // Pencarian global & cari bab ikut menyaring lewat event 'blur-change'.
   var blurBtn = document.getElementById('blur-btn');
   var blurOn = false;
@@ -26,8 +26,8 @@
       blurBtn.classList.toggle('on', blurOn);
       blurBtn.setAttribute('aria-pressed', blurOn ? 'true' : 'false');
       blurBtn.title = blurOn
-        ? 'Sembunyikan seri dari Mikoroku & Doujindesu'
-        : 'Tampilkan seri dari Mikoroku & Doujindesu';
+        ? 'Sembunyikan seri D (Mikoroku, Doujindesu, genre 18+)'
+        : 'Tampilkan seri D (Mikoroku, Doujindesu, genre 18+)';
     }
     try { localStorage.setItem('mfmam-blur', blurOn ? '1' : '0'); } catch(e){}
     window.dispatchEvent(new Event('blur-change'));
@@ -68,7 +68,7 @@
       res.innerHTML = '';
       if (q.length < 2) return;
       var out = index.filter(function(d){
-        if (d.b && !blurOn) return false; // seri dewasa disembunyikan saat Blur mati
+        if (d.b && !blurOn) return false; // seri D disembunyikan saat Blur mati
         return d.t.toLowerCase().indexOf(q) !== -1 ||
                (d.g || []).some(function(g){ return g.toLowerCase().indexOf(q) !== -1; });
       });
@@ -167,7 +167,7 @@
         crx.innerHTML = '';
         if (!tokens.length){ crx.hidden = true; return; }
         var res = chapterIndex.filter(function(d){
-          if (d.b && !blurOn) return false; // seri dewasa disembunyikan saat Blur mati
+          if (d.b && !blurOn) return false; // seri D disembunyikan saat Blur mati
           return tokens.every(function(t){ return tokenHit(t, d); });
         });
         res.sort(function(a, b){

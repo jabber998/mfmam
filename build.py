@@ -160,17 +160,45 @@ def reader_url(slug, c):
     return '/manga/%s/#bab/%s' % (esc(slug), esc(str(key)))
 
 
-# Sumber konten dewasa yang disembunyikan dari daftar saat tombol Blur mati.
-# ON  -> seri dari Mikoroku & Doujindesu ikut ditampilkan
-# OFF -> kedua sumber disembunyikan (default, tampilan aman).
+# ---- tombol Blur: tampilkan/sembunyikan konten D ----
+# ON  -> seri D ikut ditampilkan
+# OFF -> seri D disembunyikan (default, tampilan aman).
+#
+# Sebuah seri dianggap konten D bila memenuhi salah satu:
+#   1) berasal dari sumber D (BLUR_SOURCES, mis. mikoroku)
+#   2) salah satu `genres`-nya masuk daftar BLUR_GENRES (auto-detect)
+#   3) ditandai manual via field `"blur": true` pada file seri
+#
+# Pencarian global & cari bab ikut menyaring lewat event 'blur-change'.
 BLUR_SOURCES = {
     'mikoroku': 'Mikoroku',
     'doujindesu': 'Doujindesu',
 }
 
+# Genre yang menandakan konten D/18+. Auto-detect membatasi
+# false-positive (tidak menyertakan Harem/Seinen/Josei/Yaoi/Yuri yang belum
+# tentu eksplisit). Admin bisa menimpa lewat field `"blur": true` pada file
+# site-content/series/<slug>.json.
+BLUR_GENRES = {
+    'adult', 'mature', 'dewasa',
+    'ecchi', 'etchi',
+    'hentai', 'hanime',
+    'smut', 'porn', 'porno', 'pornographic',
+    'erotica', 'erotic', 'ero',
+    'sex', 'seks', 'sexual', 'seksual',
+    'bdsm', 'bondage',
+    'shota', 'shotacon',
+    'netorare', 'ntr', 'netori',
+    'futanari',
+    'ahegao', 'nakadashi', 'creampie', 'blowjob', 'handjob',
+    'fellatio', 'paizuri', 'rimjob', 'cunnilingus',
+    'femdom', 'maledom', 'gangbang', 'rape',
+    'impregnation', 'lactation', 'tentacles', 'incest', 'bukkake',
+}
+
 
 def blur_source_of(s):
-    """Nama sumber dewasa ('mikoroku' / 'doujindesu') bila seri berasal dari
+    """Nama sumber D ('mikoroku' / 'doujindesu') bila seri berasal dari
     salah satunya; '' untuk seri biasa. Deteksi lewat source_url dan tautan
     bab eksternal yang memuat domain sumber tersebut."""
     hay = ' '.join([
@@ -182,6 +210,37 @@ def blur_source_of(s):
     if 'doujin.desu' in hay or 'doujindesu' in hay:
         return 'doujindesu'
     return ''
+
+
+def blur_genres_of(s):
+    """Daftar genre D milik seri (auto-detect lewat BLUR_GENRES)."""
+    return [g for g in (s.get('genres') or [])
+            if (g or '').strip().lower() in BLUR_GENRES]
+
+
+def blur_of(s):
+    """Kategorisasi Blur sebuah seri. Kembalikan (key, label_html):
+    - key berisi -> seri disembunyikan saat tombol Blur mati:
+      * ('mikoroku'|'doujindesu', 'dari <strong>X</strong>')
+      * ('genre', 'ber-genre <strong>Adult, Smut</strong>')
+      * override admin via field `blur: true`
+    - ('', '') bila seri aman (selalu tampil).
+    """
+    if s.get('blur'):
+        return 'genre', 'ber-genre <strong>D</strong> (ditandai admin)'
+    src = blur_source_of(s)
+    if src:
+        return src, 'dari <strong>%s</strong>' % BLUR_SOURCES.get(src, src)
+    gs = blur_genres_of(s)
+    if gs:
+        return 'genre', 'ber-genre <strong>%s</strong>' % esc(', '.join(gs))
+    return '', ''
+
+
+def blur_key_of(s):
+    """Kunci blur seri (non-kosong = disembunyikan saat tombol Blur mati)."""
+    return blur_of(s)[0]
+
 
 
 def card_html(s):
@@ -200,7 +259,7 @@ def card_html(s):
     upd = fmt_date(s.get('last_updated'))
     upd_html = ('<div class="mc-update">Update: %s</div>' % esc(upd)) if upd else ''
     badge = status_badge_html(s)
-    blur = blur_source_of(s)
+    blur = blur_key_of(s)
     adult = ' data-blur="%s"' % blur if blur else ''
     return ('<article class="manga-card"%s><a class="manga-link" '
             'href="/manga/%s/"><div class="thumb">%s'
@@ -308,7 +367,7 @@ def render_page(title, body, site, tagline, extra=''):
             '<li><a href="/kontak/">Kontak</a></li></ul></nav>'
             '<div class="actions">'
             '<button type="button" id="blur-btn" aria-pressed="false" '
-            'title="Tampilkan seri dari Mikoroku &amp; Doujindesu">'
+            'title="Tampilkan seri D (Mikoroku, Doujindesu, genre 18+)">'
             'Blur: Mati</button>'
             '<button type="button" id="theme-btn" aria-pressed="false" '
             'title="Ganti tema gelap/terang">&#9789;</button>'
@@ -401,16 +460,15 @@ def series_page_html(s):
     search_ui = chapter_search_ui(s.get('title'))
     shell = ('<div id="reader" class="reader-shell" hidden '
              'aria-live="polite"></div>')
-    blur = blur_source_of(s)
+    blur, blur_why = blur_of(s)
     page_attr = ' data-blur="%s"' % blur if blur else ''
     if blur:
-        label = BLUR_SOURCES.get(blur, blur)
-        note = ('<div class="blur-note"><p>Seri dari <strong>%s</strong> '
+        note = ('<div class="blur-note"><p>Seri ini %s '
                 'disembunyikan saat tombol Blur mati. Nyalakan Blur untuk '
                 'menampilkan seri ini.</p>'
                 '<button type="button" class="blur-enable-btn" '
                 'data-blur-enable>&#128065; Nyalakan Blur</button></div>'
-                % esc(label))
+                % blur_why)
     else:
         note = ''
     return ('<div class="seri-page" data-slug="%s"%s>'
@@ -455,8 +513,8 @@ def chapter_search_ui(series=None):
 def chapter_index(series_list):
     """Indeks seluruh bab (lintas seri) untuk 'Cari Bab untuk Dibaca'.
     URL bab memakai reader dinamis: /manga/<slug>/#bab/<kunci>.
-    Field `b` menandai bab milik seri dewasa (di-filter tombol Blur)."""
-    blur = {s.get('slug'): 1 if blur_source_of(s) else 0 for s in series_list}
+    Field `b` menandai bab milik seri D (di-filter tombol Blur)."""
+    blur = {s.get('slug'): 1 if blur_key_of(s) else 0 for s in series_list}
     out = []
     for s in series_list:
         st = s.get('title') or s.get('slug')
@@ -656,7 +714,7 @@ def build():
         search.append({'t': s.get('title') or s.get('slug'),
                        'u': '/manga/%s/' % s.get('slug'),
                        'g': s.get('genres') or [],
-                       'b': 1 if blur_source_of(s) else 0})
+                       'b': 1 if blur_key_of(s) else 0})
         sitemap.append(' <url><loc>%s/manga/%s/</loc></url>'
                        % (SITE_URL, esc(s.get('slug'))))
 
