@@ -47,6 +47,33 @@ jobs:
           BATCH_LIMIT: ""
         run: |
           python scraper_doujindesu.py
+      # Mirror gambar doujindesu ke Blogger (dengan --refresh): URL gambar
+      # doujindesu bertanda tangan & basi ~24 jam. Untuk tiap seri doujindesu
+      # di katalog: 1) --refresh -> ambil URL gambar SEGAR via API (hanya bab
+      # yang BELUM permanen), 2) mirror -> unduh & upload ke Blogger host
+      # post, tulis URL permanen ke json. Bab yang sudah permanen dilewati,
+      # jadi step ini incremental. Kredensial dari env BLOGGER_* (GitHub
+      # Secrets); dilewati bila secrets belum di-set.
+      - name: Mirror gambar doujindesu ke Blogger (permanen)
+        env:
+          BLOGGER_CLIENT_ID: ${{ secrets.BLOGGER_CLIENT_ID }}
+          BLOGGER_CLIENT_SECRET: ${{ secrets.BLOGGER_CLIENT_SECRET }}
+          BLOGGER_REFRESH_TOKEN: ${{ secrets.BLOGGER_REFRESH_TOKEN }}
+          BLOGGER_BLOG_ID: ${{ secrets.BLOGGER_BLOG_ID }}
+        run: |
+          if [ -z "$BLOGGER_CLIENT_ID" ]; then
+            echo "::warning::BLOGGER_CLIENT_ID belum di-set; mirror ke Blogger dilewati."
+            exit 0
+          fi
+          shopt -s nullglob
+          for f in site-content/series/*.json; do
+            if python -c "import json,sys;d=json.load(open(sys.argv[1],encoding='utf-8'));print('1') if 'doujin.desu.xxx' in (d.get('source_url') or '') else None" "$f" | grep -q '^1$'; then
+              slug=$(basename "$f" .json)
+              echo "== mirror $slug =="
+              python scraper_blogger.py "$slug" --refresh --max-images 300 \
+                || echo "::warning::mirror $slug gagal; lanjut ke seri lain"
+            fi
+          done
 
       - name: Build situs statis (dist/)
         run: |

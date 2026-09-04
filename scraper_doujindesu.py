@@ -28,7 +28,7 @@ from scraper_common import (
     UA, _SSL_CTX,
     SourceAdapter, register_adapter,
     clean_title, slugify, secs, chapter_label, polite_delay, logv,
-    fresh_cutoff, chapter_within_window,
+    fresh_cutoff, chapter_within_window, merge_existing_chapter_data,
 )
 DOUJIN_WEB = 'https://doujin.desu.xxx'
 DOUJIN_API_BASE = DOUJIN_WEB + '/api'
@@ -311,6 +311,10 @@ def _doujin_scrape_series(entry, want_images=False, want_dates=False):
         raise ValueError('tidak ada bab di ' + url)
     # urutkan bab: naik (paling lama di bawah -> dibaca dulu)
     chapters.sort(key=_doujin_ch_num_key)
+    # Tempel kembali gambar/tanggal bab dari file seri lama (hasil restore dari
+    # Cloudflare). Bab yang ALREADY punya URL gambar TIDAK di-fetch ulang lewat
+    # API (incremental: hanya bab yang gambarnya kosong/hapus yang diisi ulang).
+    chapters = merge_existing_chapter_data(chapters, slug2)
     if want_images:
         chapters = _doujin_fill_images(chapters)
     last_upd = data.get('updated_at') or ''
