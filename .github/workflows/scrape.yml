@@ -4,9 +4,24 @@ on:
   workflow_dispatch:
     inputs:
       urls:
-        description: "Tempel URL manga (satu per baris). Kosongkan untuk memakai sources.json."
+        description: "Tempel URL mana saja yang ingin discrape (satu per baris): halaman seri / halaman daftar / slug sendiri. Kosongkan bila memakai ceklis sumber di bawah (atau sources.json)."
         required: false
         type: string
+      scrape_komikindo:
+        description: "PILIH SUMBER: centang untuk scrape KOMIKINDO (daftar komik-terbaru). Kosongkan semua ceklis = pakai sources.json penuh."
+        required: false
+        type: boolean
+        default: false
+      scrape_mikoroku:
+        description: "PILIH SUMBER: centang untuk scrape MIKOROKU (katalog JSON)."
+        required: false
+        type: boolean
+        default: false
+      scrape_doujindesu:
+        description: "PILIH SUMBER: centang untuk scrape DOUJINDESU (semua seri yang sudah ada di katalog, via API; butuh hasil restore situs live)."
+        required: false
+        type: boolean
+        default: false
       batch:
         description: "Jumlah manga yang diproses dalam batch ini."
         required: false
@@ -63,22 +78,71 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Tulis URL manual (bila diisi di form)
-        if: github.event_name == 'workflow_dispatch' && inputs.urls != ''
-        env:
-          BATCH: ${{ inputs.urls }}
+      - name: Install dependensi (requests + Pillow utk mirror Blogger)
         run: |
-          mkdir -p site-content
-          printf '%s\n' "$BATCH" | tr -d '\r' > site-content/manual-batch.txt
+          pip install --quiet requests pillow
 
       - name: Restore data dari situs live (incremental, tanpa git)
         run: |
           python _restore_data.py || true
 
+      # Siapkan pilihan sumber. Bila salah satu ceklis dicentang, susun
+      # manual-batch.txt (URL sumber terpilih) dan batasi adaptor lewat
+      # SCRAPE_ADAPTERS. Bila semua kosong -> manual-batch tidak dibuat,
+      # scraper memakai sources.json penuh (perilaku lama).
+      # Dijalankan SETELAH restore karena doujindesu butuh daftar slug dari
+      # katalog hasil restore (site-content/series/).
+      - name: Siapkan pilihan sumber (hanya URL terpilih)
+        id: pick
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          KOMI: ${{ inputs.scrape_komikindo }}
+          MIK: ${{ inputs.scrape_mikoroku }}
+          DJ: ${{ inputs.scrape_doujindesu }}
+          URLS: ${{ inputs.urls }}
+        run: |
+          set -e
+          mkdir -p site-content
+          rm -f site-content/manual-batch.txt
+          ADAPTERS=""
+          if [ "$KOMI" = "true" ]; then
+            ADAPTERS="$ADAPTERS komikindo"
+            echo 'https://komikindo.ch/komik-terbaru/' >> site-content/manual-batch.txt
+          fi
+          if [ "$MIK" = "true" ]; then
+            ADAPTERS="$ADAPTERS mikoroku"
+            echo 'https://raw.githubusercontent.com/moemaomao/mymangadata/main/all-manga.json' >> site-content/manual-batch.txt
+          fi
+          if [ "$DJ" = "true" ]; then
+            ADAPTERS="$ADAPTERS doujindesu"
+            # semua seri doujindesu yang sudah ada di katalog (hasil restore)
+            for f in site-content/series/*.json; do
+              [ -f "$f" ] || continue
+              python -c "import json,sys;d=json.load(open(sys.argv[1],encoding='utf-8'));u=d.get('source_url') or '';print(u) if 'doujin.desu.xxx' in u else None" "$f"
+            done >> site-content/manual-batch.txt
+          fi
+          if [ -n "$URLS" ]; then
+            printf '%s\n' "$URLS" | tr -d '\r' | sed '/^[[:space:]]*$/d' >> site-content/manual-batch.txt
+          fi
+          if [ -s site-content/manual-batch.txt ]; then
+            sed -i '/^$/d' site-content/manual-batch.txt
+            echo "Manual-batch (URL yang diproses):"
+            cat site-content/manual-batch.txt
+          else
+            rm -f site-content/manual-batch.txt
+            echo "Tidak ada pilihan sumber khusus; memakai sources.json penuh."
+          fi
+          ADAPTERS=$(echo "$ADAPTERS" | xargs | tr ' ' ',')
+          echo "SCRAPE_ADAPTERS=$ADAPTERS"
+          echo "adapters=$ADAPTERS" >> "$GITHUB_OUTPUT"
+
       - name: Jalankan scraper (info seri + bab + gambar, incremental)
         env:
           BATCH_LIMIT: ${{ github.event_name == 'workflow_dispatch' && inputs.batch || '' }}
           SCRAPE_IMAGES: "1"
+          # Adaptor/sumber yang diproses (hasil pilihan step `pick`). Kosong
+          # bila tidak ada ceklis dicentang -> semua sumber berjalan.
+          SCRAPE_ADAPTERS: ${{ steps.pick.outputs.adapters }}
           # Auto-build dimatikan di sini; `python build.py` dijalankan SEKALI
           # pada step berikutnya agar tidak membangun `dist/` berulang-ulang.
           SCRAPE_AUTO_BUILD: "0"
@@ -96,6 +160,34 @@ jobs:
         if: github.event_name == 'workflow_dispatch'
         run: |
           rm -f site-content/manual-batch.txt
+
+      # Mirror gambar doujindesu ke Blogger — hanya dijalankan bila ceklis
+      # scrape_doujindesu dicentang. Untuk tiap seri doujindesu di katalog:
+      #  1) --refresh -> ambil URL gambar SEGAR via API (bab basi/expired)
+      #  2) mirror -> unduh & upload ke Blogger, tulis URL permanen
+      # Kredensial diambil dari env BLOGGER_* (GitHub Secrets), file creds
+      # tidak ikut repo.
+      - name: Mirror gambar doujindesu ke Blogger
+        if: inputs.scrape_doujindesu == 'true'
+        env:
+          BLOGGER_CLIENT_ID: ${{ secrets.BLOGGER_CLIENT_ID }}
+          BLOGGER_CLIENT_SECRET: ${{ secrets.BLOGGER_CLIENT_SECRET }}
+          BLOGGER_REFRESH_TOKEN: ${{ secrets.BLOGGER_REFRESH_TOKEN }}
+          BLOGGER_BLOG_ID: ${{ secrets.BLOGGER_BLOG_ID }}
+        run: |
+          if [ -z "$BLOGGER_CLIENT_ID" ]; then
+            echo "::warning::BLOGGER_CLIENT_ID belum di-set; mirror ke Blogger dilewati."
+            exit 0
+          fi
+          shopt -s nullglob
+          for f in site-content/series/*.json; do
+            if python -c "import json,sys;d=json.load(open(sys.argv[1],encoding='utf-8'));print('1') if 'doujin.desu.xxx' in (d.get('source_url') or '') else None" "$f" | grep -q '^1$'; then
+              slug=$(basename "$f" .json)
+              echo "== mirror $slug =="
+              python scraper_blogger.py "$slug" --refresh --max-images 300 \
+                || echo "::warning::mirror $slug gagal; lanjut ke seri lain"
+            fi
+          done
 
       - name: Build situs statis (dist/)
         run: |

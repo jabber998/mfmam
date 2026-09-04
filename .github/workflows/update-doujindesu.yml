@@ -35,10 +35,15 @@ jobs:
 
       - name: Update bab Doujindesu (2 hari terakhir)
         env:
-          # Update-only: scrape ulang seri doujindesu yang SUDAH ada di
-          # katalog via API (tidak butuh halaman daftar / sources.json).
-          SCRAPE_UPDATE_ONLY: "1"
+          # SMART-UPDATE: scan halaman /explore/ (daftar terbaru via API),
+          # lalu HANYA di-update seri yang SUDAH ADA di katalog (filter
+          # smart-update). Seri baru (muncul di explore tapi belum ada di
+          # katalog) tidak ditambahkan. Bab 2 hari terakhir lewat
+          # SCRAPE_FRESH_HOURS, batas scan explore lewat DOUJIN_EXPLORE_MAX.
+          SCRAPE_SMART_UPDATE: "1"
           SCRAPE_AUTO_BUILD: "0"
+          SCRAPE_FRESH_HOURS: "48"
+          DOUJIN_EXPLORE_MAX: "400"
           BATCH_LIMIT: ""
         run: |
           python scraper_doujindesu.py

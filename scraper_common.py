@@ -623,6 +623,21 @@ def find_existing_series(data):
 STALE_IMAGE_SOURCES = ('doujin.desu.xxx',)
 
 
+def _images_permanent(imgs):
+    """Benar bila SEMUA URL gambar sudah permanen (hosting CDN Google).
+    Dipakai supaya URL hasil mirror (`*.googleusercontent.com`, mis.
+    `blogger.googleusercontent.com` atau `lh3.googleusercontent.com`) tidak
+    terhapus oleh logika STALE_IMAGE_SOURCES pada run berikutnya."""
+    imgs = imgs or []
+    if not imgs:
+        return False
+    for u in imgs:
+        low = (u or '').lower()
+        if not ('googleusercontent.com' in low and low.startswith('http')):
+            return False
+    return True
+
+
 def write_series(slug, data):
     """Tulis site-content/series/<slug>.json; pertahankan data lama (desc,
     gambar bab yang sudah direkam) agar tidak terhapus saat di-rewrite."""
@@ -647,7 +662,8 @@ def write_series(slug, data):
                 added += 1
             if oc and not c.get('images') and oc.get('images'):
                 _src_u = (data.get('source_url') or '').lower()
-                if not any(d in _src_u for d in STALE_IMAGE_SOURCES):
+                if (not any(d in _src_u for d in STALE_IMAGE_SOURCES)
+                        or _images_permanent(oc.get('images'))):
                     c['images'] = oc['images']   # jaga gambar lama (incremental)
             if oc and not c.get('date') and oc.get('date'):
                 c['date'] = oc['date']        # jaga tanggal bab lama

@@ -18,6 +18,7 @@ lama tidak dipertahankan (lihat STALE_IMAGE_SOURCES di scraper_common).
 import sys
 import json
 import math
+import os
 import random
 import time
 from urllib.parse import unquote, urlsplit
@@ -370,19 +371,83 @@ class DoujindesuAdapter(SourceAdapter):
         return host == 'doujin.desu.xxx' or host.endswith('.doujin.desu.xxx')
 
     def is_listing_url(self, url):
-        return False
+        # doujin.desu.xxx/explore (+query search/genre/page/) adalah direktori
+        # daftar seri, bukan satu halaman seri.
+        try:
+            path = (urlsplit(url or '').path or '').rstrip('/').lower()
+        except Exception:
+            path = (url or '').strip().split('?', 1)[0].rstrip('/').lower()
+        return path in ('/explore', '/doujin', '/manhwa')
 
     def expand_seed(self, entry, want_images):
-        return [entry]
+        """Halaman /explore -> daftar entri seri (loop paginasi offset).
+
+        Endpoint: /manga?limit=24&offset={(page-1)*24}.
+        Header respons x-total-count memberitahu jumlah total seri."""
+        url = (entry.get('url') or '').strip()
+        if not self.is_listing_url(url):
+            return [entry]
+        try:
+            qd = dict(pair.split('=', 1) for pair in
+                      (url.split('?', 1)[1].split('&') if '?' in url else [])
+                      if '=' in pair)
+            page0 = int(qd.get('page', '1') or '1')
+        except Exception:
+            page0 = 1
+        limit = 24
+        offset = (max(1, page0) - 1) * limit
+        out = []
+        seen = set()
+        total = None
+        cap = int(os.environ.get('DOUJIN_EXPLORE_MAX', '400'))
+        while True:
+            qs = 'limit=%d&offset=%d&sort=newest' % (limit, offset)
+            data = None
+            try:
+                req = Request(DOUJIN_API_BASE + '/manga?' + qs,
+                              headers=_doujin_headers())
+                with urlopen(req, timeout=30, context=_SSL_CTX) as r:
+                    raw0 = r.read()
+                got = r.headers.get('x-total-count')
+                if got:
+                    total = int(got)
+                obj0 = _doujin_parse(raw0)
+                if isinstance(obj0, list):
+                    data = obj0
+            except Exception as ex:
+                print('   ! explore offset %d gagal: %s' % (offset, ex))
+                break
+            if not data:
+                break
+            for it in data:
+                if not isinstance(it, dict):
+                    continue
+                slug = (it.get('slug') or '').strip()
+                if not slug or slug in seen:
+                    continue
+                seen.add(slug)
+                out.append({'url': DOUJIN_WEB + '/manga/' + slug + '/'})
+            if total is not None and offset + len(data) >= total:
+                break
+            if len(data) < limit:
+                break
+            if len(out) >= cap:
+                print('   ! capai batas DOUJIN_EXPLORE_MAX=%d seri; berhenti'
+                      % cap)
+                break
+            offset += limit
+        print('[explore] %d seri dari doujin.desu.xxx (total=%s)'
+              % (len(out), total))
+        return out
 
     def scrape_series(self, entry, want_images=False, want_dates=False):
         return _doujin_scrape_series(entry, want_images=want_images,
                                      want_dates=want_dates)
 
     def sitemap_series_entries(self, sitemap_url):
-        print('   ! doujindesu memakai API, bukan sitemap. Gunakan `"kind": '
-              '"doujindesu"` + URL /manga/<slug>/ di sources.json.')
-        return []
+        # /explore dipakai sebagai "sitemap" (daftar seri generik).
+        return self.expand_seed(
+            {'url': 'https://doujin.desu.xxx/explore/'}, False)
 
     def refresh_chapter(self, series, chapter):
         """Ambil ulang URL gambar (bertanda tangan, basi ~24 jam) lewat API."""

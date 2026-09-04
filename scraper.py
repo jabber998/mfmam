@@ -67,6 +67,22 @@ def main():
               '(scraper_*.py tidak terimpor).')
         return 1
 
+    # Pilihan adaptor lewat env SCRAPE_ADAPTERS (dipisah koma), mis.
+    # SCRAPE_ADAPTERS=komikindo,doujindesu. Kosongkan = semua sumber.
+    sel_env = os.environ.get('SCRAPE_ADAPTERS', '').strip()
+    if sel_env:
+        wanted = [n.strip().lower() for n in sel_env.split(',') if n.strip()]
+        keep = [a for a in adapters if a.name.lower() in wanted]
+        if not keep:
+            print('SCRAPE_ADAPTERS tidak cocok dengan adaptor mana pun: %s'
+                  % sel_env)
+            print('Adaptor yang tersedia: %s'
+                  % ', '.join(a.name for a in adapters))
+            return 1
+        print('[scraper] adaptor terpilih: %s'
+              % ', '.join(a.name for a in keep))
+        adapters = keep
+
     # Auto-build hanya dijalankan SEKALI setelah SEMUA sumber diproses, agar
     # tidak membangun ulang situs 3x dalam satu perintah. Mengesampingkan
     # env SCRAPE_AUTO_BUILD cukup untuk adaptor yang bukan terakhir.

@@ -8,5 +8,9 @@
         "detail_prefix": "https://mikoroku.com/detail?slug=",
         "reader_prefix": "https://mikoroku.com/reader?slug=",
         "blogger_feed": "https://www.mikodrive.my.id"
+    },
+    {
+        "url": "https://doujin.desu.xxx/explore/",
+        "kind": "doujindesu"
     }
 ]
