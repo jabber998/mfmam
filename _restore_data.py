@@ -8,7 +8,9 @@ kembali data yang sudah TERDEPLOY agar scraping tetap INCREMENTAL (gambar &
 tanggal bab yang sudah ada tidak di-fetch ulang).
 
 Cara kerja:
-  1. Ambil `/data/manifest.json` dari SITE_URL (daftar slug).
+  1. Kumpulkan daftar slug dari `/data/manifest.json` (R2) DAN `/sitemap.xml`
+     (statis, LIVE) lalu gabung — sitemap selalu lengkap, sedangkan manifest
+     bisa tertimpa build sebagian (site-content/ tidak di-commit ke git).
   2. Download tiap `/data/<slug>.json` -> `site-content/series/<slug>.json`
      (lewati bila file lokal sudah ADA dan ukurannya sama — hemat bandwidth).
   3. Ambil `/data/scrape-state.json` (state pagination) ke site-content/.
@@ -45,14 +47,74 @@ def _fetch(url, timeout=60):
 
 
 def _head_len(url, timeout=30):
-    """Ambil Content-Length via HEAD; None bila tidak ada / gagal."""
-    req = urllib.request.Request(url, headers=UA, method='HEAD')
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        length = r.headers.get('Content-Length')
-        try:
-            return int(length) if length else None
-        except (TypeError, ValueError):
-            return None
+    """Ambil ukuran berkas remote. Prioritas HEAD; bila HEAD gagal (Pages
+    Function mfmam hanya mengimplementasikan onRequestGet, jadi HEAD dijawab
+    404/405), fallback ke GET dengan Range bytes=0-0 lalu baca Content-Range
+    utk mendapat total ukuran tanpa men-download seluruh isi."""
+    # 1) HEAD
+    try:
+        req = urllib.request.Request(url, headers=UA, method='HEAD')
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            length = r.headers.get('Content-Length')
+            if length:
+                return int(length)
+    except Exception:
+        pass
+    # 2) GET Range bytes=0-0
+    try:
+        hdr = dict(UA)
+        hdr['Range'] = 'bytes=0-0'
+        req = urllib.request.Request(url, headers=hdr)
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            cr = r.headers.get('Content-Range') or ''
+            m = re.match(r'bytes \d+-\d+/(\d+)', cr)
+            if m:
+                return int(m.group(1))
+            length = r.headers.get('Content-Length')
+            if length:
+                return int(length)
+    except Exception:
+        pass
+    return None
+
+
+def _slug_sources(base):
+    """Kumpulkan daftar slug dari SEMUA sumber yang tersedia lalu gabung
+    (union), supaya restore tidak kehilangan seri bila salah satu sumber
+    tidak lengkap.
+
+    - /data/manifest.json  (dari R2) -> TIDAK selalu lengkap: file ini
+      ditulis ulang tiap build.py dari site-content/series/ (yang tidak
+      di-commit), jadi bisa saja berisi sebagian kecil seri.
+    - /sitemap.xml         (statis di dist, LIVE) -> daftar penuh
+      /manga/<slug>/ yang benar-benar ter-deploy.
+    """
+    slugs = []
+
+    # 1) manifest.json (R2)
+    try:
+        raw = _fetch(_url(base, '/data/manifest.json'), timeout=45)
+        man = json.loads(raw.decode('utf-8-sig').strip())
+        if isinstance(man, list):
+            slugs.extend(man)
+            print('   manifest.json: %d slug' % len(man))
+    except Exception:
+        print('   manifest.json: tidak terbaca (dilewati).')
+
+    # 2) sitemap.xml (statis, live)
+    try:
+        sm = _fetch(_url(base, '/sitemap.xml'), timeout=60).decode('utf-8', 'replace')
+        found = re.findall(r'/manga/([^/<]+)/', sm)
+        if found:
+            slugs.extend(found)
+            print('   sitemap.xml:  %d slug' % len(found))
+    except Exception:
+        print('   sitemap.xml:  tidak terbaca (dilewati).')
+
+    # buang duplikat, pertahankan urutan
+    seen = set()
+    return [s for s in slugs if not (s in seen or seen.add(s))]
+
 
 
 def restore(base=''):
@@ -61,20 +123,10 @@ def restore(base=''):
         print('   ! SITE_URL tidak valid: %r' % base)
         return 0
     print('[restore] sumber data: %s' % base)
-    man_url = _url(base, '/data/manifest.json')
-    try:
-        raw = _fetch(man_url)
-    except Exception as ex:
-        print('   ! situs belum punya data/manifest.json (%s); '
-              'restore dilewati.' % ex)
-        return 0
-    try:
-        slugs = json.loads(raw.decode('utf-8-sig').strip())
-    except Exception as ex:
-        print('   ! manifest tidak terbaca: %s' % ex)
-        return 0
-    if not isinstance(slugs, list):
-        print('   ! manifest bukan daftar slug; dilewati.')
+    slugs = _slug_sources(base)
+    if not slugs:
+        print('   ! tidak ada slug ditemukan (manifest & sitemap kosong/gagal); '
+              'restore dilewati.')
         return 0
     os.makedirs(SERIES_DIR, exist_ok=True)
     ok = skip = fail = 0
@@ -84,7 +136,7 @@ def restore(base=''):
             continue
         dst = os.path.join(SERIES_DIR, slug + '.json')
         remote = _url(base, '/data/%s.json' % slug)
-        # Lewati bila file lokal ada & ukurannya sama (HEAD cukup, no download).
+        # Lewati bila file lokal ada & ukurannya sama (HEAD; fallback GET Range).
         if os.path.exists(dst):
             try:
                 rlen = _head_len(remote)
