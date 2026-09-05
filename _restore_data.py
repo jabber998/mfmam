@@ -117,11 +117,25 @@ def _hint_access():
     if _ACCESS_HINTED[0]:
         return
     _ACCESS_HINTED[0] = True
+    has_cid = bool((os.environ.get('CF_ACCESS_CLIENT_ID') or '').strip())
+    has_csec = bool((os.environ.get('CF_ACCESS_CLIENT_SECRET') or '').strip())
+    has_ck = bool((os.environ.get('CF_AUTH_COOKIE') or '').strip())
     print('   ! PERHATIAN: respons terlihat seperti halaman/kredensial '
           'Cloudflare Access.')
-    print('     Bila situs sudah dilindungi Access, set Service Token:')
-    print('       CF_ACCESS_CLIENT_ID + CF_ACCESS_CLIENT_SECRET')
-    print('     (atau cookie CF_AUTH_COOKIE) lalu jalankan ulang restore.')
+    if has_cid and has_csec:
+        print('     Service Token TERPASANG tetapi respons masih diblokir '
+              'Access.')
+        print('     Periksa: Client ID/Secret cocok, token AKTIF, dan policy '
+              'Service Auth')
+        print('     di aplikasi Access untuk hostname yg SAMA.')
+    elif has_ck:
+        print('     Cookie CF_Authorization terpasang tetapi respons masih '
+              'diblokir Access;')
+        print('     cookie mungkin basi/kedaluwarsa.')
+    else:
+        print('     Bila situs sudah dilindungi Access, set Service Token:')
+        print('       CF_ACCESS_CLIENT_ID + CF_ACCESS_CLIENT_SECRET')
+        print('     (atau cookie CF_AUTH_COOKIE) lalu jalankan ulang restore.')
 
 
 def _url(base, path):
