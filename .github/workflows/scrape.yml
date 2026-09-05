@@ -73,6 +73,14 @@ jobs:
           pip install --quiet requests pillow
 
       - name: Restore data dari situs live (incremental, tanpa git)
+        env:
+          # Saat situs dilindungi Cloudflare Access, restore memakai Service
+          # Token (Zero Trust -> Access -> Service Auth -> Create Service Token).
+          # Set kredensial ini sebagai GitHub Secrets:
+          #   gh secret set CF_ACCESS_CLIENT_ID --repo <owner>/<repo>
+          #   gh secret set CF_ACCESS_CLIENT_SECRET --repo <owner>/<repo>
+          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
         run: |
           python _restore_data.py || true
 

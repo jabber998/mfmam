@@ -19,6 +19,20 @@ SITE_URL diambil dari env (default https://mfmam.pages.dev). Kegagalan
 download TIDAK mematikan proses: bila situs belum ada / kosong, restore
 dilewati dan scraper akan mengisi dari awal (sekali saja).
 
+--- Bila situs dilindungi Cloudflare Access (hanya pemilik yang bisa baca) ---
+Restore tetap jalan dengan SERVICE TOKEN (direkomendasikan) atau COOKIE:
+
+  Service Token (Zero Trust -> Access -> Service Auth -> Create Service Token):
+    setenv CF_ACCESS_CLIENT_ID=<client_id>
+    setenv CF_ACCESS_CLIENT_SECRET=<client_secret>
+    python _restore_data.py
+
+  Cookie browser (setelah login, DevTools -> Application -> Cookies):
+    setenv CF_AUTH_COOKIE="CF_Authorization=xxxxx"   # atau nilai cookie saja
+    python _restore_data.py
+
+CLI alternatif: --cf-client-id, --cf-client-secret, --cf-cookie.
+
 Jalankan:
   python _restore_data.py                      # dari SITE_URL env / default
   python _restore_data.py --url https://x.pages.dev
@@ -28,6 +42,8 @@ import re
 import sys
 import json
 import urllib.request
+import urllib.parse
+from urllib.error import HTTPError, URLError
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 SERIES_DIR = os.path.join(ROOT, 'site-content', 'series')
@@ -36,14 +52,111 @@ STATE_PATH = os.path.join(ROOT, 'site-content', 'scrape-state.json')
 _DEF = 'https://mfmam.pages.dev'
 UA = {'User-Agent': 'Mozilla/5.0 (Mfmam-restore)'}
 
+# Prioritas otorisasi: Service Token (2 header) lalu cookie CF_Authorization.
+# Bila keduanya kosong, request tetap anonim (situs belum dilindungi Access).
+
+
+def _cf_cookie_value(raw):
+    """Normalisasi nilai cookie CF_Authorization.
+
+    Terima salah satu:
+      - string cookie mentah dari DevTools (bisa berisi banyak pasangan)   -> ambil CF_Authorization
+      - `CF_Authorization=<nilai>` (eksplisit dengan nama kunci)
+      - nilai cookie itu sendiri (tanpa nama kunci)
+    """
+    raw = (raw or '').strip()
+    if not raw:
+        return ''
+    for part in raw.split(';'):
+        part = part.strip()
+        if part.lower().startswith('cf_authorization='):
+            return part.split('=', 1)[1]
+    if raw.lower().startswith('cf_authorization='):
+        return raw.split('=', 1)[1]
+    return raw
+
+
+def _auth_headers():
+    """Header request + otorisasi Cloudflare Access bila dikonfigurasi (via env)."""
+    h = dict(UA)
+    cid = os.environ.get('CF_ACCESS_CLIENT_ID', '').strip()
+    csec = os.environ.get('CF_ACCESS_CLIENT_SECRET', '').strip()
+    if cid and csec:
+        h['CF-Access-Client-Id'] = cid
+        h['CF-Access-Client-Secret'] = csec
+    ck = os.environ.get('CF_AUTH_COOKIE', '').strip()
+    if ck:
+        h['Cookie'] = 'CF_Authorization=' + _cf_cookie_value(ck)
+    return h
+
+
+class _SafeRedirect(urllib.request.HTTPRedirectHandler):
+    """Ikuti redirect hanya bila masih ke HOST YANG SAMA.
+
+    Saat Access mengalihkan (karena tanpa kredensial) ke halaman login,
+    jangan diikuti — supaya Service Token / cookie TIDAK terkirim ke host
+    lain (access.cloudflare.com).
+    """
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        old = urllib.parse.urlsplit(req.full_url).netloc.lower()
+        new = urllib.parse.urlsplit(newurl).netloc.lower()
+        if old and new and new != old:
+            raise URLError('redirect ke host lain ditolak (halaman login '
+                           'Cloudflare Access?): %r' % newurl)
+        return urllib.request.HTTPRedirectHandler.redirect_request(
+            self, req, fp, code, msg, headers, newurl)
+
+
+_OPENER = None
+_ACCESS_HINTED = [False]
+
+
+def _hint_access():
+    """Cetak petunjuk sekali saja bila respons terlihat seperti halaman Access."""
+    if _ACCESS_HINTED[0]:
+        return
+    _ACCESS_HINTED[0] = True
+    print('   ! PERHATIAN: respons terlihat seperti halaman/kredensial '
+          'Cloudflare Access.')
+    print('     Bila situs sudah dilindungi Access, set Service Token:')
+    print('       CF_ACCESS_CLIENT_ID + CF_ACCESS_CLIENT_SECRET')
+    print('     (atau cookie CF_AUTH_COOKIE) lalu jalankan ulang restore.')
+
 
 def _url(base, path):
     return base.rstrip('/') + path
 
 
+def _opener():
+    """Opener tunggal dengan redirect handler aman (tidak bocor header)."""
+    global _OPENER
+    if _OPENER is None:
+        _OPENER = urllib.request.build_opener(_SafeRedirect())
+    return _OPENER
+
+
 def _fetch(url, timeout=60):
-    req = urllib.request.Request(url, headers=UA)
-    return urllib.request.urlopen(req, timeout=timeout).read()
+    req = urllib.request.Request(url, headers=_auth_headers())
+    try:
+        return _opener().open(req, timeout=timeout).read()
+    except URLError as ex:
+        msg = str(ex)
+        if ('cloudflareaccess' in msg.lower() or 'login' in msg.lower()
+                or 'access' in msg.lower()):
+            _hint_access()
+        raise
+    except HTTPError as ex:
+        if ex.code in (302, 307, 308, 401, 403):
+            body = b''
+            try:
+                body = ex.read(512).lower()
+            except Exception:
+                pass
+            if (b'access denied' in body or b'access.cloudflare.com' in body
+                    or ex.code in (302, 307)):
+                _hint_access()
+        raise
 
 
 def _head_len(url, timeout=30):
@@ -53,8 +166,9 @@ def _head_len(url, timeout=30):
     utk mendapat total ukuran tanpa men-download seluruh isi."""
     # 1) HEAD
     try:
-        req = urllib.request.Request(url, headers=UA, method='HEAD')
-        with urllib.request.urlopen(req, timeout=timeout) as r:
+        req = urllib.request.Request(url, headers=_auth_headers(),
+                                     method='HEAD')
+        with _opener().open(req, timeout=timeout) as r:
             length = r.headers.get('Content-Length')
             if length:
                 return int(length)
@@ -62,10 +176,10 @@ def _head_len(url, timeout=30):
         pass
     # 2) GET Range bytes=0-0
     try:
-        hdr = dict(UA)
+        hdr = _auth_headers()
         hdr['Range'] = 'bytes=0-0'
         req = urllib.request.Request(url, headers=hdr)
-        with urllib.request.urlopen(req, timeout=timeout) as r:
+        with _opener().open(req, timeout=timeout) as r:
             cr = r.headers.get('Content-Range') or ''
             m = re.match(r'bytes \d+-\d+/(\d+)', cr)
             if m:
@@ -76,6 +190,13 @@ def _head_len(url, timeout=30):
     except Exception:
         pass
     return None
+
+
+def _looks_like_access_html(raw):
+    """True bila respons berbentuk halaman HTML (kemungkinan halaman login
+    Cloudflare Access yang balas 200, bukan redirect). Manifest/sitemap asli
+    selalu JSON/XML, bukan HTML."""
+    return bool(raw) and (b'<!doctype' in raw.lower() or b'<html' in raw.lower())
 
 
 def _slug_sources(base):
@@ -94,6 +215,9 @@ def _slug_sources(base):
     # 1) manifest.json (R2)
     try:
         raw = _fetch(_url(base, '/data/manifest.json'), timeout=45)
+        if _looks_like_access_html(raw):
+            _hint_access()
+            return []
         man = json.loads(raw.decode('utf-8-sig').strip())
         if isinstance(man, list):
             slugs.extend(man)
@@ -104,6 +228,9 @@ def _slug_sources(base):
     # 2) sitemap.xml (statis, live)
     try:
         sm = _fetch(_url(base, '/sitemap.xml'), timeout=60).decode('utf-8', 'replace')
+        if sm.lstrip().lower().startswith(('<!doctype', '<html')):
+            _hint_access()
+            return []
         found = re.findall(r'/manga/([^/<]+)/', sm)
         if found:
             slugs.extend(found)
@@ -123,6 +250,16 @@ def restore(base=''):
         print('   ! SITE_URL tidak valid: %r' % base)
         return 0
     print('[restore] sumber data: %s' % base)
+    cid = (os.environ.get('CF_ACCESS_CLIENT_ID') or '').strip()
+    csec = (os.environ.get('CF_ACCESS_CLIENT_SECRET') or '').strip()
+    ck = (os.environ.get('CF_AUTH_COOKIE') or '').strip()
+    if cid and csec:
+        shown = cid if len(cid) <= 8 else cid[:8] + '...'
+        print('[restore] otorisasi: Service Token Cloudflare Access (id=%s)'
+              % shown)
+    elif ck:
+        print('[restore] otorisasi: cookie CF_Authorization (panjang %d)'
+              % len(ck))
     slugs = _slug_sources(base)
     if not slugs:
         print('   ! tidak ada slug ditemukan (manifest & sitemap kosong/gagal); '
@@ -172,6 +309,15 @@ def main():
         k = sys.argv.index('--url')
         if k + 1 < len(sys.argv):
             base = sys.argv[k + 1].strip()
+    # Otorisasi Cloudflare Access (override env): --cf-client-id,
+    # --cf-client-secret, --cf-cookie.
+    for opt, env in (('--cf-client-id', 'CF_ACCESS_CLIENT_ID'),
+                     ('--cf-client-secret', 'CF_ACCESS_CLIENT_SECRET'),
+                     ('--cf-cookie', 'CF_AUTH_COOKIE')):
+        if opt in sys.argv:
+            k = sys.argv.index(opt)
+            if k + 1 < len(sys.argv):
+                os.environ[env] = sys.argv[k + 1].strip()
     return restore(base)
 
 

@@ -35,6 +35,13 @@ jobs:
       # Restore SEMUA seri dari situs live / R2 (termasuk sumber D),
       # supaya penghapusan ini mencakup data yang benar-benar sedang live.
       - name: Restore data katalog dari situs live
+        env:
+          # Cloudflare Access Service Token (bila situs dilindungi Access).
+          # Set sebagai GitHub Secrets:
+          #   gh secret set CF_ACCESS_CLIENT_ID --repo <owner>/<repo>
+          #   gh secret set CF_ACCESS_CLIENT_SECRET --repo <owner>/<repo>
+          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
         run: |
           python _restore_data.py || true
 
